@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "penumbra"
+version = "0.1.0"
+description = "Modular obfuscation toolkit with composable pass architecture"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.15",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+pe = ["pefile>=2023.2.7"]
+
+[project.scripts]
+penumbra = "penumbra.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.9",
+    "mypy>=1.10",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
