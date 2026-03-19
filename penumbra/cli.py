@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.console import Console
 
+# Trigger pass registration by importing pipeline sub-packages
+import penumbra.ps  # noqa: F401
 from penumbra import __version__
 from penumbra.detector import detect
 from penumbra.pipeline import resolve_passes, run
 from penumbra.types import PassConfig, PipelineType
 
-# Trigger pass registration by importing pipeline sub-packages
-import penumbra.ps  # noqa: F401
-
-app = typer.Typer(add_completion=False, no_args_is_help=True)
+app = typer.Typer(add_completion=False)
 console = Console(stderr=True)
 
 _PIPELINE_MAP: dict[str, PipelineType] = {t.value: t for t in PipelineType}
@@ -28,18 +27,18 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-@app.callback(invoke_without_command=True)
+@app.command()
 def main(
     input_file: Annotated[Path, typer.Argument(help="File to obfuscate")],
     output: Annotated[
-        Optional[Path], typer.Option("--output", "-o", help="Output file path")
+        Path | None, typer.Option("--output", "-o", help="Output file path")
     ] = None,
     pipeline: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--pipeline", help="Pipeline type (ps, dotnet-il, script, pe)"),
     ] = None,
     passes: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--passes", help="Comma-separated pass names"),
     ] = None,
     safe_rename: Annotated[
@@ -49,7 +48,7 @@ def main(
         bool, typer.Option("--verbose", "-v", help="Verbose output")
     ] = False,
     version: Annotated[
-        Optional[bool],
+        bool | None,
         typer.Option("--version", callback=_version_callback, is_eager=True),
     ] = None,
 ) -> None:
