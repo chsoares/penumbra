@@ -1,0 +1,99 @@
+"""Penumbra CLI — single-command Typer app."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Annotated, Optional
+
+import typer
+from rich.console import Console
+
+from penumbra import __version__
+from penumbra.detector import detect
+from penumbra.pipeline import resolve_passes, run
+from penumbra.types import PassConfig, PipelineType
+
+# Trigger pass registration by importing pipeline sub-packages
+import penumbra.ps  # noqa: F401
+
+app = typer.Typer(add_completion=False, no_args_is_help=True)
+console = Console(stderr=True)
+
+_PIPELINE_MAP: dict[str, PipelineType] = {t.value: t for t in PipelineType}
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        console.print(f"penumbra {__version__}")
+        raise typer.Exit()
+
+
+@app.callback(invoke_without_command=True)
+def main(
+    input_file: Annotated[Path, typer.Argument(help="File to obfuscate")],
+    output: Annotated[
+        Optional[Path], typer.Option("--output", "-o", help="Output file path")
+    ] = None,
+    pipeline: Annotated[
+        Optional[str],
+        typer.Option("--pipeline", help="Pipeline type (ps, dotnet-il, script, pe)"),
+    ] = None,
+    passes: Annotated[
+        Optional[str],
+        typer.Option("--passes", help="Comma-separated pass names"),
+    ] = None,
+    safe_rename: Annotated[
+        bool, typer.Option("--safe-rename", help="Enable safe-rename mode")
+    ] = False,
+    verbose: Annotated[
+        bool, typer.Option("--verbose", "-v", help="Verbose output")
+    ] = False,
+    version: Annotated[
+        Optional[bool],
+        typer.Option("--version", callback=_version_callback, is_eager=True),
+    ] = None,
+) -> None:
+    """Penumbra — Modular obfuscation toolkit."""
+    if not input_file.exists():
+        console.print(f"[red]Error:[/red] file not found: {input_file}")
+        raise typer.Exit(1)
+
+    data = input_file.read_bytes()
+
+    # Detect or parse pipeline type
+    if pipeline:
+        if pipeline not in _PIPELINE_MAP:
+            valid = ", ".join(_PIPELINE_MAP)
+            console.print(f"[red]Error:[/red] unknown pipeline '{pipeline}'. Valid: {valid}")
+            raise typer.Exit(1)
+        pipe_type = _PIPELINE_MAP[pipeline]
+    else:
+        pipe_type = detect(input_file, data)
+
+    if verbose:
+        console.print(f"[bold]Pipeline:[/bold] {pipe_type.value}")
+
+    # Resolve passes
+    pass_names = [p.strip() for p in passes.split(",")] if passes else None
+    resolved = resolve_passes(pipe_type, pass_names)
+
+    if verbose:
+        names = ", ".join(p.name for p in resolved)
+        console.print(f"[bold]Passes:[/bold] {names}")
+
+    # Build config and run
+    config = PassConfig(pipeline=pipe_type, safe_rename=safe_rename, verbose=verbose)
+    result = run(data, resolved, config)
+
+    # Determine output path
+    if output is None:
+        stem = input_file.stem
+        suffix = input_file.suffix
+        output = input_file.parent / f"{stem}.obf{suffix}"
+
+    output.write_bytes(result)
+    console.print(f"[green]✓[/green] Written to {output}")
+
+
+if __name__ == "__main__":
+    app()
