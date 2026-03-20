@@ -95,7 +95,7 @@ class MoonSpinner:
         if self._thread is not None:
             self._thread.join()
         if done:
-            sys.stderr.write(f"\r  {_G}{_DONE_ICON} {_T}payload cloaked.{_R}\033[K\n")
+            sys.stderr.write(f"\r  {_M}{_DONE_ICON} {_T}payload cloaked.{_R}\033[K\n")
         else:
             sys.stderr.write("\r\033[K")
         sys.stderr.flush()
