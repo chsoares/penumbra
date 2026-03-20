@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -21,10 +22,28 @@ console = Console(stderr=True)
 
 _PIPELINE_MAP: dict[str, PipelineType] = {t.value: t for t in PipelineType}
 
+# ANSI 256-color codes
+_M = "\033[38;5;5m"    # magenta — moon
+_B = "\033[38;5;245m"  # light gray — border
+_T = "\033[38;5;240m"  # dark gray — text
+_R = "\033[0m"         # reset
+
+_BANNER = (
+    f"\n{_B}  ╭───────────────────────────────╮{_R}\n"
+    f"{_B}  │    {_M}☾  {_T}p e n u m b r a{_B}         │{_R}\n"
+    f"{_B}  ╰───────────────────────────────╯{_R}\n"
+)
+
+
+def _print_banner() -> None:
+    """Print the Penumbra banner to stderr."""
+    sys.stderr.write(_BANNER)
+
 
 def _version_callback(value: bool) -> None:
     if value:
-        console.print(f"penumbra {__version__}")
+        _print_banner()
+        console.print(f"  {__version__}")
         raise typer.Exit()
 
 
@@ -54,6 +73,8 @@ def main(
     ] = None,
 ) -> None:
     """Penumbra — Modular obfuscation toolkit."""
+    _print_banner()
+
     if not input_file.exists():
         console.print(f"[red]Error:[/red] file not found: {input_file}")
         raise typer.Exit(1)
