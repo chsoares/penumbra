@@ -7,8 +7,19 @@ import secrets
 import sys
 import threading
 
-# Nerd Font moon phases: U+E3DD (full) → U+E3D4 (new) — waning cycle
-_MOON_PHASES = [chr(c) for c in range(0xE3DD, 0xE3D3, -1)]
+# Full 28-frame lunar cycle using Nerd Font weather icons:
+#   full → waning gibbous → third quarter → waning crescent →
+#   new  → waxing crescent → first quarter → waxing gibbous → (repeat)
+_MOON_PHASES = [
+    "\ue3d5",                                                  # full
+    "\ue3d6", "\ue3d7", "\ue3d8", "\ue3d9", "\ue3da", "\ue3db",  # waning gibbous 1-6
+    "\ue3dc",                                                  # third quarter
+    "\ue3dd", "\ue3de", "\ue3df", "\ue3e0", "\ue3e1", "\ue3e2",  # waning crescent 1-6
+    "\ue3e3",                                                  # new
+    "\ue3c8", "\ue3c9", "\ue3ca", "\ue3cb", "\ue3cc", "\ue3cd",  # waxing crescent 1-6
+    "\ue3ce",                                                  # first quarter
+    "\ue3cf", "\ue3d0", "\ue3d1", "\ue3d2", "\ue3d3", "\ue3d4",  # waxing gibbous 1-6
+]
 
 _VERBS = [
     "shrouding",
@@ -38,8 +49,12 @@ _NOUNS = [
 
 # ANSI colors (match cli.py palette)
 _M = "\033[38;5;5m"    # magenta — moon
+_G = "\033[38;5;245m"  # light gray — done icon
 _T = "\033[38;5;240m"  # dark gray — text
 _R = "\033[0m"         # reset
+
+# Done icon: Nerd Font checkmark (U+F1829)
+_DONE_ICON = "\U000f1829"
 
 
 def _random_phrase() -> str:
@@ -74,12 +89,15 @@ class MoonSpinner:
         self._thread = threading.Thread(target=self._animate, daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
-        """Stop the spinner and clear the line."""
+    def stop(self, done: bool = True) -> None:
+        """Stop the spinner and show completion message."""
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join()
-        sys.stderr.write("\r\033[K")
+        if done:
+            sys.stderr.write(f"\r  {_G}{_DONE_ICON} {_T}payload cloaked.{_R}\033[K\n")
+        else:
+            sys.stderr.write("\r\033[K")
         sys.stderr.flush()
 
     def __enter__(self) -> MoonSpinner:

@@ -55,13 +55,15 @@ def run(data: bytes, passes: list[Pass], config: PassConfig) -> bytes:
     if not config.verbose:
         spinner.start()
 
+    ok = False
     try:
         result = data
         for p in passes:
             if config.verbose:
                 console.print(f"  [dim]→ running pass:[/dim] [bold]{p.name}[/bold]")
             result = p.apply(result, config)
+        ok = True
         return result
     finally:
         if not config.verbose:
-            spinner.stop()
+            spinner.stop(done=ok)
