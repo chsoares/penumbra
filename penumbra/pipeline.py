@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from rich.console import Console
 
+from penumbra.spinner import MoonSpinner
 from penumbra.types import Pass, PassConfig, PipelineType
 
 _REGISTRY: dict[PipelineType, list[Pass]] = {}
@@ -50,9 +51,17 @@ def resolve_passes(
 
 def run(data: bytes, passes: list[Pass], config: PassConfig) -> bytes:
     """Execute passes sequentially, folding data through each one."""
-    result = data
-    for p in passes:
-        if config.verbose:
-            console.print(f"  [dim]→ running pass:[/dim] [bold]{p.name}[/bold]")
-        result = p.apply(result, config)
-    return result
+    spinner = MoonSpinner()
+    if not config.verbose:
+        spinner.start()
+
+    try:
+        result = data
+        for p in passes:
+            if config.verbose:
+                console.print(f"  [dim]→ running pass:[/dim] [bold]{p.name}[/bold]")
+            result = p.apply(result, config)
+        return result
+    finally:
+        if not config.verbose:
+            spinner.stop()
