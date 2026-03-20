@@ -17,3 +17,8 @@ def hello_ps1() -> Path:
 @pytest.fixture()
 def hello_ps1_bytes() -> bytes:
     return (FIXTURES_DIR / "hello.ps1").read_bytes()
+
+
+@pytest.fixture()
+def complex_ps1_bytes() -> bytes:
+    return (FIXTURES_DIR / "complex.ps1").read_bytes()
