@@ -144,6 +144,41 @@ internal static class Program
         return strings;
     }
 
+    private static bool IsInterfaceImpl(MethodDef method)
+    {
+        // Skip methods that implement interfaces or are virtual/override
+        if (method.IsVirtual || method.IsAbstract || method.IsNewSlot) return true;
+        if (method.HasOverrides) return true;
+        // Check if the declaring type implements any interfaces
+        var type = method.DeclaringType;
+        if (type != null && type.HasInterfaces)
+        {
+            foreach (var iface in type.Interfaces)
+            {
+                var ifaceType = iface.Interface.ResolveTypeDef();
+                if (ifaceType == null) continue;
+                foreach (var ifaceMethod in ifaceType.Methods)
+                {
+                    if (ifaceMethod.Name == method.Name) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static bool IsCompilerGenerated(IHasCustomAttribute member)
+    {
+        return member.CustomAttributes.Any(a =>
+            a.TypeFullName == "System.Runtime.CompilerServices.CompilerGeneratedAttribute");
+    }
+
+    private static bool IsSpecialType(TypeDef type)
+    {
+        var name = type.Name.String;
+        // Compiler-generated types: async state machines, closures, iterators
+        return name.Contains('<') || name.Contains('>') || name.StartsWith("$");
+    }
+
     private static void ApplyRename(ModuleDef module, bool safeRename)
     {
         var entryPoint = module.EntryPoint;
@@ -152,20 +187,31 @@ internal static class Program
         foreach (var type in module.GetTypes().ToList())
         {
             if (type.IsGlobalModuleType) continue;
+            if (type.IsInterface) continue;
+            if (IsSpecialType(type)) continue; // compiler-generated types
+            if (IsCompilerGenerated(type)) continue;
             if (safeRename && literals.Contains(type.Name.String)) continue;
 
-            type.Name = RandomId();
+            // Don't rename types with interfaces, enums, or value types
+            if (!type.HasInterfaces && !type.IsEnum && !type.IsValueType)
+                type.Name = RandomId();
 
             foreach (var method in type.Methods)
             {
                 if (method.IsConstructor) continue;
                 if (method == entryPoint) continue;
+                if (IsInterfaceImpl(method)) continue;
+                if (method.IsSpecialName) continue;
+                if (IsCompilerGenerated(method)) continue;
                 if (safeRename && literals.Contains(method.Name.String)) continue;
                 method.Name = RandomId();
             }
 
             foreach (var field in type.Fields)
             {
+                if (IsCompilerGenerated(field)) continue;
+                // Skip fields with compiler-generated names (backing fields, closures)
+                if (field.Name.String.Contains('<') || field.Name.String.Contains('>')) continue;
                 if (safeRename && literals.Contains(field.Name.String)) continue;
                 field.Name = RandomId();
             }
@@ -182,17 +228,11 @@ internal static class Program
 
     private static void ApplyEncryptStrings(ModuleDef module)
     {
-        // Inject decryptor helper class
-        var decryptorType = new TypeDefUser(
-            "Penumbra_Internal",
-            RandomId(),
-            module.CorLibTypes.Object.TypeDefOrRef);
-        decryptorType.Attributes = TypeAttributes.NotPublic | TypeAttributes.Sealed
-            | TypeAttributes.Abstract; // static class
+        // Create decrypt method — added to <Module> global type to avoid metadata disruption
+        var byteArrayType = new SZArraySig(module.CorLibTypes.Byte);
 
-        // Create decrypt method: static string Decrypt(string base64Data, string base64Key)
         var decryptMethod = new MethodDefUser(
-            "Decrypt",
+            RandomId(),
             MethodSig.CreateStatic(module.CorLibTypes.String,
                 module.CorLibTypes.String, module.CorLibTypes.String),
             MethodImplAttributes.IL | MethodImplAttributes.Managed,
@@ -202,48 +242,39 @@ internal static class Program
         var body = decryptMethod.Body;
         body.InitLocals = true;
 
-        // Local variables
-        var byteArrayType = new SZArraySig(module.CorLibTypes.Byte);
-        body.Variables.Add(new Local(byteArrayType));  // loc0: byte[] data
-        body.Variables.Add(new Local(byteArrayType));  // loc1: byte[] key
-        body.Variables.Add(new Local(module.CorLibTypes.Int32)); // loc2: i
+        // Locals: byte[] data, byte[] key, int i, char[] chars
+        body.Variables.Add(new Local(byteArrayType));                         // 0: data
+        body.Variables.Add(new Local(byteArrayType));                         // 1: key
+        body.Variables.Add(new Local(module.CorLibTypes.Int32));               // 2: i
+        body.Variables.Add(new Local(new SZArraySig(module.CorLibTypes.Char))); // 3: chars
 
-        // Import methods we need
+        // Import Convert.FromBase64String
         var convertType = module.CorLibTypes.GetTypeRef("System", "Convert");
         var fromBase64 = new MemberRefUser(module, "FromBase64String",
             MethodSig.CreateStatic(byteArrayType, module.CorLibTypes.String),
             convertType);
 
-        var encodingType = module.CorLibTypes.GetTypeRef("System.Text", "Encoding");
-        var getUtf8 = new MemberRefUser(module, "get_UTF8",
-            MethodSig.CreateInstance(
-                new ClassSig(encodingType)),
-            encodingType);
-        // Actually Encoding.UTF8 returns Encoding, and GetString takes byte[] returns string
-        var getUtf8Prop = new MemberRefUser(module, "get_UTF8",
-            MethodSig.CreateStatic(new ClassSig(encodingType)),
-            encodingType);
-        var getString = new MemberRefUser(module, "GetString",
-            MethodSig.CreateInstance(module.CorLibTypes.String, byteArrayType),
-            encodingType);
+        // Import new String(char[])
+        var stringCtorSig = MethodSig.CreateInstance(
+            module.CorLibTypes.Void, new SZArraySig(module.CorLibTypes.Char));
+        var stringCtor = new MemberRefUser(module, ".ctor", stringCtorSig,
+            module.CorLibTypes.String.TypeDefOrRef);
 
-        // byte[] data = Convert.FromBase64String(arg0)
+        // data = Convert.FromBase64String(arg0)
         body.Instructions.Add(OpCodes.Ldarg_0.ToInstruction());
         body.Instructions.Add(OpCodes.Call.ToInstruction(fromBase64));
         body.Instructions.Add(OpCodes.Stloc_0.ToInstruction());
-        // byte[] key = Convert.FromBase64String(arg1)
+        // key = Convert.FromBase64String(arg1)
         body.Instructions.Add(OpCodes.Ldarg_1.ToInstruction());
         body.Instructions.Add(OpCodes.Call.ToInstruction(fromBase64));
         body.Instructions.Add(OpCodes.Stloc_1.ToInstruction());
-        // i = 0
+
+        // XOR decrypt in-place
         body.Instructions.Add(OpCodes.Ldc_I4_0.ToInstruction());
         body.Instructions.Add(OpCodes.Stloc_2.ToInstruction());
-
-        // Loop start
         var loopCheck = OpCodes.Nop.ToInstruction();
         body.Instructions.Add(OpCodes.Br.ToInstruction(loopCheck));
 
-        // Loop body: data[i] ^= key[i % key.Length]
         var loopBody = OpCodes.Ldloc_0.ToInstruction();
         body.Instructions.Add(loopBody);
         body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
@@ -260,13 +291,11 @@ internal static class Program
         body.Instructions.Add(OpCodes.Xor.ToInstruction());
         body.Instructions.Add(OpCodes.Conv_U1.ToInstruction());
         body.Instructions.Add(OpCodes.Stelem_I1.ToInstruction());
-        // i++
         body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
         body.Instructions.Add(OpCodes.Ldc_I4_1.ToInstruction());
         body.Instructions.Add(OpCodes.Add.ToInstruction());
         body.Instructions.Add(OpCodes.Stloc_2.ToInstruction());
 
-        // Loop check: i < data.Length
         body.Instructions.Add(loopCheck);
         body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
         body.Instructions.Add(OpCodes.Ldloc_0.ToInstruction());
@@ -274,25 +303,61 @@ internal static class Program
         body.Instructions.Add(OpCodes.Conv_I4.ToInstruction());
         body.Instructions.Add(OpCodes.Blt.ToInstruction(loopBody));
 
-        // return Encoding.UTF8.GetString(data)
-        body.Instructions.Add(OpCodes.Call.ToInstruction(getUtf8Prop));
+        // Convert decrypted bytes to string via char array (avoids Encoding ref issues)
+        // chars = new char[data.Length]
         body.Instructions.Add(OpCodes.Ldloc_0.ToInstruction());
-        body.Instructions.Add(OpCodes.Callvirt.ToInstruction(getString));
+        body.Instructions.Add(OpCodes.Ldlen.ToInstruction());
+        body.Instructions.Add(OpCodes.Conv_I4.ToInstruction());
+        body.Instructions.Add(OpCodes.Newarr.ToInstruction(module.CorLibTypes.Char.TypeDefOrRef));
+        body.Instructions.Add(OpCodes.Stloc_3.ToInstruction());
+
+        // for (i = 0; i < data.Length; i++) chars[i] = (char)data[i]
+        body.Instructions.Add(OpCodes.Ldc_I4_0.ToInstruction());
+        body.Instructions.Add(OpCodes.Stloc_2.ToInstruction());
+        var loopCheck2 = OpCodes.Nop.ToInstruction();
+        body.Instructions.Add(OpCodes.Br.ToInstruction(loopCheck2));
+
+        var loopBody2 = OpCodes.Ldloc_3.ToInstruction();
+        body.Instructions.Add(loopBody2);
+        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
+        body.Instructions.Add(OpCodes.Ldloc_0.ToInstruction());
+        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
+        body.Instructions.Add(OpCodes.Ldelem_U1.ToInstruction());
+        body.Instructions.Add(OpCodes.Stelem_I2.ToInstruction());
+        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
+        body.Instructions.Add(OpCodes.Ldc_I4_1.ToInstruction());
+        body.Instructions.Add(OpCodes.Add.ToInstruction());
+        body.Instructions.Add(OpCodes.Stloc_2.ToInstruction());
+
+        body.Instructions.Add(loopCheck2);
+        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
+        body.Instructions.Add(OpCodes.Ldloc_0.ToInstruction());
+        body.Instructions.Add(OpCodes.Ldlen.ToInstruction());
+        body.Instructions.Add(OpCodes.Conv_I4.ToInstruction());
+        body.Instructions.Add(OpCodes.Blt.ToInstruction(loopBody2));
+
+        // return new string(chars)
+        body.Instructions.Add(OpCodes.Ldloc_3.ToInstruction());
+        body.Instructions.Add(OpCodes.Newobj.ToInstruction(stringCtor));
         body.Instructions.Add(OpCodes.Ret.ToInstruction());
 
+        body.SimplifyBranches();
         body.OptimizeBranches();
         body.OptimizeMacros();
 
-        decryptorType.Methods.Add(decryptMethod);
-        module.Types.Add(decryptorType);
+        // Add decrypt method to the global <Module> type (avoids adding new types)
+        var globalType = module.GlobalType;
+        globalType.Methods.Add(decryptMethod);
 
         // Now replace all ldstr instructions
         foreach (var type in module.GetTypes().ToList())
         {
-            if (type == decryptorType) continue;
             foreach (var method in type.Methods)
             {
+                if (method == decryptMethod) continue;
                 if (!method.HasBody) continue;
+                // Skip constructors — modifying .cctor/.ctor can produce invalid IL
+                if (method.IsConstructor) continue;
                 var instrs = method.Body.Instructions;
                 for (int i = 0; i < instrs.Count; i++)
                 {
