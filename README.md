@@ -1,14 +1,6 @@
 # Penumbra
 
-Modular obfuscation toolkit with composable pass architecture.
-
-```
-  ╭───────────────────────────────╮
-  │     p e n u m b r a         │
-  ╰───────────────────────────────╯
-```
-
-Penumbra auto-detects file types and routes them through pipeline-specific obfuscation passes. Each pass is a stateless transform that can be chained, reordered, or cherry-picked.
+Modular obfuscation toolkit with composable pass architecture. Auto-detects file types and routes them through pipeline-specific obfuscation passes. Each pass is a stateless transform that can be chained, reordered, or cherry-picked.
 
 > **Scope**: This tool is intended for authorized security testing, red team operations, and educational research only.
 
@@ -105,56 +97,3 @@ penumbra implant.exe --safe-rename
 ```
 
 Default output: `<filename>.obf.<ext>` in the same directory.
-
----
-
-## Development
-
-```bash
-uv sync --dev          # Install all deps
-uv run pytest -v       # Run tests
-uv run ruff check penumbra/   # Lint
-uv run mypy penumbra/  # Type check (strict)
-uv run penumbra --help # CLI help
-```
-
-### Adding a new pass
-
-1. Create a class in `penumbra/<pipeline>/your_pass.py` implementing the `Pass` protocol
-2. Add an instance to the pass list in `penumbra/<pipeline>/__init__.py`
-3. Write tests in `tests/test_<pipeline>_<pass>.py`
-4. Run `uv run pytest -v && uv run mypy penumbra/`
-
-### Pass contract
-
-Every pass implements `penumbra.types.Pass`:
-
-```python
-class MyPass:
-    @property
-    def name(self) -> str:
-        return "my-pass"
-
-    def apply(self, data: bytes, config: PassConfig) -> bytes:
-        # Stateless, pure transform
-        return transformed_data
-```
-
----
-
-## Architecture
-
-```
-Input file → Detector → Pipeline type → Resolve passes → Run passes → Output
-                │                              │
-                │  magic bytes / extension /    │  registry populated by
-                │  shebang heuristics          │  pipeline sub-packages
-                ▼                              ▼
-          PipelineType enum            _REGISTRY[type] → [Pass, ...]
-```
-
----
-
-## License
-
-MIT
