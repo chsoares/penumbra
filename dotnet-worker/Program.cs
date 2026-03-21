@@ -366,7 +366,11 @@ internal static class Program
                 assembly.CustomAttributes.Remove(attr);
         }
 
-        // Clear PDB state
-        module.PdbState = null;
+        // Remove module-level debug custom attributes
+        var moduleToRemove = module.CustomAttributes
+            .Where(a => a.TypeFullName == "System.Diagnostics.DebuggableAttribute")
+            .ToList();
+        foreach (var attr in moduleToRemove)
+            module.CustomAttributes.Remove(attr);
     }
 }

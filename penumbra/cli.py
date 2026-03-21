@@ -17,7 +17,6 @@ from penumbra.detector import detect
 from penumbra.pipeline import resolve_passes, run
 from penumbra.types import PassConfig, PipelineType
 
-app = typer.Typer(add_completion=False)
 console = Console(stderr=True)
 
 _PIPELINE_MAP: dict[str, PipelineType] = {t.value: t for t in PipelineType}
@@ -29,9 +28,9 @@ _T = "\033[38;5;240m"  # dark gray — text
 _R = "\033[0m"         # reset
 
 _BANNER = (
-    f"\n{_B}  ╭───────────────────────────────╮{_R}\n"
-    f"{_B}  │    {_M}\uf4ee  {_T}p e n u m b r a{_B}        │{_R}\n"
-    f"{_B}  ╰───────────────────────────────╯{_R}\n"
+    f"\n{_B}  ╭────────────────────────────╮{_R}\n"
+    f"{_B}  │    {_M}\uf4ee  {_T}p e n u m b r a{_B}     │{_R}\n"
+    f"{_B}  ╰────────────────────────────╯{_R}\n"
 )
 
 
@@ -45,6 +44,17 @@ def _version_callback(value: bool) -> None:
         _print_banner()
         console.print(f"  {__version__}")
         raise typer.Exit()
+
+
+class PenumbraApp(typer.Typer):
+    """Typer subclass that prints the banner before any output."""
+
+    def __call__(self, *args: object, **kwargs: object) -> object:
+        _print_banner()
+        return super().__call__(*args, **kwargs)
+
+
+app = PenumbraApp(add_completion=False)
 
 
 @app.command()
@@ -73,8 +83,6 @@ def main(
     ] = None,
 ) -> None:
     """Penumbra — Modular obfuscation toolkit."""
-    _print_banner()
-
     if not input_file.exists():
         console.print(f"[red]Error:[/red] file not found: {input_file}")
         raise typer.Exit(1)

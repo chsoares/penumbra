@@ -78,7 +78,7 @@ class MoonSpinner:
             # Rotate phrase every full moon cycle
             if self._ticks > 0 and self._ticks % len(_MOON_PHASES) == 0:
                 self._phrase = _random_phrase()
-            line = f"\r  {_M}{moon} {_T}{self._phrase}...{_R}\033[K"
+            line = f"\r{_M}{moon} {_T}{self._phrase}...{_R}\033[K"
             sys.stderr.write(line)
             sys.stderr.flush()
             self._ticks += 1
@@ -95,7 +95,7 @@ class MoonSpinner:
         if self._thread is not None:
             self._thread.join()
         if done:
-            sys.stderr.write(f"\r  {_M}{_DONE_ICON} {_T}payload cloaked.{_R}\033[K\n")
+            sys.stderr.write(f"\r{_M}{_DONE_ICON} {_T}payload cloaked.{_R}\033[K\n")
         else:
             sys.stderr.write("\r\033[K")
         sys.stderr.flush()
