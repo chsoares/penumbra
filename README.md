@@ -40,7 +40,7 @@ Powered by [dnlib](https://github.com/0xd4d/dnlib) via a C# subprocess worker:
 | Dependency | Required for | Install (Arch Linux) | Install (other) |
 |------------|-------------|---------------------|-----------------|
 | **Python 3.11+** | Core | `sudo pacman -S python` | [python.org](https://www.python.org/) |
-| **uv** | Package management | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | Same |
+| **uv** | Package management | `sudo pacman -S uv` | [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/) |
 | **.NET 8 SDK** | DOTNET-IL pipeline only | `sudo pacman -S dotnet-sdk-8.0` | [dotnet.microsoft.com](https://dotnet.microsoft.com/download) |
 | **Nerd Font** | Terminal icons (optional) | Any [Nerd Font](https://www.nerdfonts.com/) in your terminal | Same |
 
