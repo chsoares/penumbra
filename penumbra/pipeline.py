@@ -34,7 +34,7 @@ def resolve_passes(
         raise ValueError(f"No passes registered for pipeline '{pipeline_type.value}'")
 
     if requested_names is None:
-        return list(available)
+        return [p for p in available if not getattr(p, "opt_in", False)]
 
     by_name = {p.name: p for p in available}
     resolved: list[Pass] = []

@@ -33,9 +33,9 @@ Powered by [dnlib](https://github.com/0xd4d/dnlib) via a C# subprocess worker:
 - **strip-debug** — remove `DebuggableAttribute`, PDB info, compiler attributes
 - **embed** — wrap the obfuscated assembly in a new .NET loader that decrypts and loads the payload in-memory via `Assembly.Load(byte[])`. The original assembly never touches disk. This should be the **last pass** in the chain
 
-Default pass order: `dinvoke → rename → encrypt-strings → flow → strip-debug → embed`
+Default pass order: `dinvoke → rename → encrypt-strings → flow → strip-debug`
 
-> **Note**: The `embed` pass generates a new .NET executable. When using `--passes` to cherry-pick, put `embed` last. Without `embed`, you get a directly executable obfuscated assembly. With `embed`, you get a loader that extracts and runs the payload in memory — useful when file-based AV scanning is the primary threat.
+> **Note**: The `embed` pass is **opt-in** — it's not included in the default run because it changes the output from an obfuscated assembly to a loader executable. Enable it explicitly with `--passes` when you want in-memory delivery. Always put `embed` last in the chain.
 
 ---
 

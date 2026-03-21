@@ -71,6 +71,8 @@ internal static class {cls_name}
 class DotnetEmbedPass:
     """Wrap the assembly in an in-memory loader with XOR-encrypted payload."""
 
+    opt_in = True  # Not included in default pass list; use --passes to enable
+
     @property
     def name(self) -> str:
         return "embed"

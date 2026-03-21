@@ -1,73 +1,94 @@
 # Next Steps — .NET IL Pipeline
 
-Comparison against [MacroPack blog](https://blog.balliskit.com/obfuscation-and-weaponization-of-net-assemblies-using-macropack-77feb815489c) techniques.
+Comparison against [MacroPack blog](https://blog.balliskit.com/obfuscation-and-weaponization-of-net-assemblies-using-macropack-77feb815489c) techniques and real-world VirusTotal results.
+
+## Current results (SharpHound v2.11.0)
+
+| Stage | VT detections | Notes |
+|---|---|---|
+| Original | 47/72 | Heavily signatured |
+| After IL obfuscation (rename, encrypt-strings, flow, strip-debug) | 26/72 | No more BloodHound/SharpHound labels |
+| After IL obfuscation + embed | 22/72 | Labels shifted to `MSIL.Krypt`, `Obfuscator` — identity hidden but loader pattern flagged |
 
 ## What we have
 
-| Technique | Our pass | Notes |
-|---|---|---|
-| Symbol renaming | `rename` | Types, methods, fields, properties |
-| String encryption | `encrypt-strings` | XOR + injected IL-level decryptor |
-| Metadata stripping | `strip-debug` | PDB, `DebuggableAttribute`, compiler attributes |
-| Control flow obfuscation | `flow` | NOP padding + opaque predicates |
-| Reflection-safe renaming | `rename --safe-rename` | **Partial** — we skip symbols that appear as string literals. MacroPack instead renames everything and injects a runtime mapping dictionary that intercepts reflection calls transparently. Our approach is safer but less thorough |
+| Technique | Our pass | Default | Notes |
+|---|---|---|---|
+| DInvoke mutation | `dinvoke` | Yes | Converts PInvoke to runtime resolution. Conservative mode skips complex marshalling. Effective for tools with direct Win32 API calls (e.g., SharpKatz), not for high-level tools like SharpHound that use managed APIs |
+| Symbol renaming | `rename` | Yes | Types, methods, fields, properties |
+| String encryption | `encrypt-strings` | Yes | XOR + injected IL-level decryptor |
+| Control flow obfuscation | `flow` | Yes | NOP padding + opaque predicates |
+| Metadata stripping | `strip-debug` | Yes | PDB, `DebuggableAttribute`, compiler attributes |
+| In-memory embedding | `embed` | **Opt-in** | XOR-encrypted payload + `Assembly.Load(byte[])` loader. Use via `--passes ...,embed` |
+| Reflection-safe renaming | `rename --safe-rename` | — | Partial — skips symbols that appear as string literals |
 
-## What's missing
+## Embed delivery pipeline (next focus)
 
-### 1. DInvoke Mutation (highest impact)
+The `embed` pass hides payload identity (47→22 detections, no more BloodHound labels) but the loader itself gets flagged as `MSIL.Krypt` / `Obfuscator` because it's an obvious decrypt-and-load stub. The next improvements all target making the loader look legitimate.
 
-Convert static `[DllImport("kernel32.dll")]` (PInvoke) into runtime dynamic resolution (DInvoke). Native function names (`VirtualAlloc`, `CreateRemoteThread`) and DLL names (`kernel32.dll`) disappear from the assembly metadata entirely.
+### 1. Entropy reduction for the loader
 
-**Why it matters**: PInvoke imports are the #1 static detection vector. AV/EDR scans for suspicious native API import combinations. With DInvoke, there's nothing to scan.
+Inflate the loader with structured low-entropy padding (fake classes, string arrays, resource files) to bring Shannon entropy down from ~7.5 to ~5.5 bits/byte.
 
-**Implementation**: Parse PInvoke signatures in IL, replace with delegate-based runtime resolution via `GetProcAddress` or API hashing. Requires injecting resolver code into the assembly.
+**Why it matters**: Multiple VT vendors flag on entropy alone (`Suspicious.low.ml.score`, `Static AI - Malicious PE`).
 
-**Complexity**: High.
-
-### 2. In-Memory Embedding (high impact)
-
-Wrap the obfuscated assembly inside a new .NET loader that loads the payload via `Assembly.Load(byte[])`. The original assembly never touches disk.
-
-**Why it matters**: Defeats file-based scanning and EDR file-write hooks. Complicates forensic analysis.
-
-**Implementation**: Generate a loader C# project that embeds the obfuscated assembly as an encrypted resource, extracts it at runtime, and loads it in-process.
-
-**Complexity**: Medium.
-
-### 3. Entropy Reduction (easy win)
-
-Inflate the assembly with structured low-entropy padding to reduce Shannon entropy. Obfuscated/encrypted payloads tend toward ~8.0 bits/byte, which is a common AV heuristic flag.
-
-**Why it matters**: Makes the binary look like legitimate software to entropy-based heuristics.
-
-**Implementation**: Add structured padding data to the assembly. Configurable size parameter (`--inflate-size`).
+**Implementation**: After generating the loader C# project, add fake source files with realistic code patterns before compiling. Configurable via `--inflate-size`.
 
 **Complexity**: Low.
 
-### 4. Heuristic-Bypass Naming (easy win)
+### 2. Payload fragmentation
 
-Generate variable/function names that look plausible (`GetServiceHandler`, `ProcessDataItem`) instead of random hex (`_a8f3c2d1`). Purely random names are themselves an obfuscation signal.
+Split the encrypted payload into multiple smaller Base64 chunks embedded as separate string constants or resource files, reconstructed at runtime.
 
-**Why it matters**: Heuristic engines flag assemblies where all symbols are random gibberish.
+**Why it matters**: A single 1.8MB Base64 string screams "encrypted payload". Multiple smaller strings distributed across classes look like normal application data.
 
-**Implementation**: Combine programming verbs/nouns to generate realistic-looking identifiers. Apply to both .NET `rename` and PS1 `rename` passes.
+**Implementation**: Split encrypted bytes into N chunks (configurable), generate N static fields across M fake classes, reassemble in `Main()`.
 
 **Complexity**: Low-medium.
 
-### 5. Hide Console (trivial)
+### 3. Trojanized assembly (`--host` flag)
 
-Set the PE subsystem to Windows GUI so no console window appears during execution.
+Instead of generating a loader from scratch, inject the loading code into an existing legitimate .NET assembly provided by the user.
 
-**Why it matters**: Prevents visible indicators of suspicious activity.
+```bash
+penumbra implant.exe --passes rename,encrypt-strings,embed --host /path/to/legit-tool.exe
+```
 
-**Implementation**: Flip the subsystem flag in the PE header via dnlib.
+**Why it matters**: The loader inherits the legitimate app's structure, imports, strings, resources, and metadata — making it indistinguishable from a real application. AV sees a known-good tool with some extra code, not a naked loader stub.
+
+**Implementation**:
+- Load the host assembly with dnlib
+- Inject the encrypted payload as an embedded resource
+- Add a static constructor (`.cctor`) or hook an existing method to run the decryption + `Assembly.Load` code
+- Preserve all original functionality of the host (it still works as the original tool)
+- Accept host path via `PassConfig.extra["host"]`, exposed as `--host` CLI flag
+
+**Complexity**: Medium-high. The main challenge is injecting code without breaking the host's existing functionality, especially if it has its own static constructors or initialization logic.
+
+### 4. Heuristic-bypass naming
+
+Generate plausible identifiers (`GetServiceHandler`, `ProcessDataItem`) instead of random hex (`_a8f3c2d1`). Apply to both the `rename` pass and the `embed` loader's generated code.
+
+**Why it matters**: Random gibberish names are themselves a detection signal for ML-based classifiers.
+
+**Implementation**: Dictionary of programming verbs (`Get`, `Set`, `Process`, `Handle`, `Create`, `Update`) + nouns (`Service`, `Config`, `Data`, `Context`, `Manager`, `Factory`). Random combinations produce natural-looking names.
+
+**Complexity**: Low.
+
+### 5. Hide console
+
+Set PE subsystem to Windows GUI in the loader output.
+
+**Why it matters**: Console window appearing is a visible indicator.
+
+**Implementation**: Flip subsystem flag in PE header via dnlib, or set `<OutputType>WinExe</OutputType>` in the loader's .csproj.
 
 **Complexity**: Trivial.
 
 ## Suggested priority
 
-1. DInvoke mutation — biggest evasion impact
-2. In-memory embedding — second biggest
-3. Entropy reduction — quick win
-4. Heuristic-bypass naming — quick win
-5. Hide console — trivial addition
+1. Entropy reduction — quick win, directly addresses `Static AI` / `ml.score` detections
+2. Payload fragmentation — quick win, complements entropy reduction
+3. Heuristic-bypass naming — quick win
+4. Trojanized assembly — highest impact but most complex
+5. Hide console — trivial
