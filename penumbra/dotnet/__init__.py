@@ -1,5 +1,6 @@
 """Dotnet IL pipeline — register available passes."""
 
+from penumbra.dotnet.embed import DotnetEmbedPass
 from penumbra.dotnet.il_worker import (
     DotnetDInvokePass,
     DotnetEncryptStringsPass,
@@ -16,4 +17,5 @@ register_pipeline(PipelineType.DOTNET_IL, [
     DotnetEncryptStringsPass(),
     DotnetFlowPass(),
     DotnetStripDebugPass(),
+    DotnetEmbedPass(),
 ])

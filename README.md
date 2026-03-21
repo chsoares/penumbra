@@ -11,7 +11,7 @@ Modular obfuscation toolkit with composable pass architecture. Auto-detects file
 | Pipeline | Input | Passes | Status |
 |----------|-------|--------|--------|
 | **PS1** | `.ps1` scripts | `amsi` `rename` `tokenize` `encode` | Ready |
-| **DOTNET-IL** | `.exe` / `.dll` (.NET assemblies) | `rename` `encrypt-strings` `flow` `strip-debug` | Ready |
+| **DOTNET-IL** | `.exe` / `.dll` (.NET assemblies) | `dinvoke` `rename` `encrypt-strings` `flow` `strip-debug` `embed` | Ready |
 | Script | `.py` / `.sh` | — | Planned |
 | PE | Native binaries | — | Planned |
 
@@ -26,10 +26,16 @@ Modular obfuscation toolkit with composable pass architecture. Auto-detects file
 
 Powered by [dnlib](https://github.com/0xd4d/dnlib) via a C# subprocess worker:
 
+- **dinvoke** — convert static `[DllImport]` PInvoke calls to runtime DInvoke resolution via `NativeLibrary.Load` + `Marshal.GetDelegateForFunctionPointer<T>`. Removes native function names and DLL names from the PE import table. Skips methods with complex marshalling (by-ref structs, callbacks)
 - **rename** — randomize type, method, field, and property names (`--safe-rename` to skip reflection targets)
 - **encrypt-strings** — XOR-encrypt string literals with injected IL-level decryptor
 - **flow** — insert NOP padding and opaque predicates
 - **strip-debug** — remove `DebuggableAttribute`, PDB info, compiler attributes
+- **embed** — wrap the obfuscated assembly in a new .NET loader that decrypts and loads the payload in-memory via `Assembly.Load(byte[])`. The original assembly never touches disk. This should be the **last pass** in the chain
+
+Default pass order: `dinvoke → rename → encrypt-strings → flow → strip-debug → embed`
+
+> **Note**: The `embed` pass generates a new .NET executable. When using `--passes` to cherry-pick, put `embed` last. Without `embed`, you get a directly executable obfuscated assembly. With `embed`, you get a loader that extracts and runs the payload in memory — useful when file-based AV scanning is the primary threat.
 
 ---
 
@@ -86,8 +92,14 @@ penumbra payload.ps1 -o out/payload.obf.ps1
 # Cherry-pick passes
 penumbra payload.ps1 --passes rename,encode
 
-# Obfuscate a .NET assembly
+# Obfuscate a .NET assembly (all passes including in-memory embed)
 penumbra implant.exe --verbose
+
+# Without in-memory embedding (directly executable output)
+penumbra implant.exe --passes dinvoke,rename,encrypt-strings,flow,strip-debug
+
+# Minimal obfuscation + embed (rename + encrypt + loader wrapper)
+penumbra implant.exe --passes rename,encrypt-strings,embed
 
 # Force pipeline type
 penumbra tool.dll --pipeline dotnet-il --passes rename,encrypt-strings

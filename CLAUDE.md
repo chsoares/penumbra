@@ -23,8 +23,8 @@ Every pass implements the `Pass` protocol (`penumbra/types.py`):
 
 | Package | Type | Status |
 |---------|------|--------|
-| `penumbra/ps/` | PS1 | MVP (encode) |
-| `penumbra/dotnet/` | .NET IL | Stub |
+| `penumbra/ps/` | PS1 | Ready (amsi, rename, tokenize, encode) |
+| `penumbra/dotnet/` | .NET IL | Ready (dinvoke, rename, encrypt-strings, flow, strip-debug, embed) |
 | `penumbra/script/` | Python/Bash | Stub |
 | `penumbra/pe/` | Native PE | Stub |
 
