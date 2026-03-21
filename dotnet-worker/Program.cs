@@ -91,7 +91,11 @@ internal static class Program
         }
 
         Console.Error.WriteLine($"Writing output: {outputPath}");
-        module.Write(outputPath);
+        var opts = new dnlib.DotNet.Writer.ModuleWriterOptions(module)
+        {
+            MetadataOptions = { Flags = dnlib.DotNet.Writer.MetadataFlags.KeepOldMaxStack }
+        };
+        module.Write(outputPath, opts);
         Console.Error.WriteLine("Done.");
         return 0;
     }
@@ -288,12 +292,14 @@ internal static class Program
                     var b64Data = Convert.ToBase64String(encrypted);
                     var b64Key = Convert.ToBase64String(key);
 
-                    // Replace ldstr with: ldstr b64Data, ldstr b64Key, call Decrypt
-                    instrs[i] = OpCodes.Ldstr.ToInstruction(b64Data);
+                    // Modify the existing instruction in-place to preserve branch targets
+                    instrs[i].Operand = b64Data;
                     instrs.Insert(i + 1, OpCodes.Ldstr.ToInstruction(b64Key));
                     instrs.Insert(i + 2, OpCodes.Call.ToInstruction(decryptMethod));
                     i += 2; // skip the newly inserted instructions
                 }
+                method.Body.SimplifyBranches();
+                method.Body.OptimizeBranches();
             }
         }
     }
@@ -338,6 +344,7 @@ internal static class Program
                     instrs.Insert(pos + 3, OpCodes.Brfalse.ToInstruction(target));
                 }
 
+                method.Body.SimplifyBranches();
                 method.Body.OptimizeBranches();
                 method.Body.OptimizeMacros();
             }
