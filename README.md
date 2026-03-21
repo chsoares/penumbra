@@ -12,7 +12,7 @@ Modular obfuscation toolkit with composable pass architecture. Auto-detects file
 |----------|-------|--------|--------|
 | **PS1** | `.ps1` scripts | `amsi` `rename` `tokenize` `encode` | Ready |
 | **DOTNET-IL** | `.exe` / `.dll` (.NET assemblies) | `dinvoke` `rename` `encrypt-strings` `flow` `strip-debug` `embed` | Ready |
-| Script | `.py` / `.sh` | — | Planned |
+| **Script** | `.py` / `.sh` | `wrap` `encode` | Ready |
 | PE | Native binaries | — | Planned |
 
 ### PS1 passes
@@ -21,6 +21,11 @@ Modular obfuscation toolkit with composable pass architecture. Auto-detects file
 - **rename** — replace user-defined variables and function names with random identifiers
 - **tokenize** — fragment suspicious string literals (`Invoke-Expression`, `AmsiUtils`, etc.)
 - **encode** — wrap everything in Base64 + `Invoke-Expression` decoder stub
+
+### Script passes
+
+- **wrap** — wrap in a self-extracting heredoc (bash) or `exec(compile(...))` (Python)
+- **encode** — Base64-encode the script with a language-appropriate exec one-liner
 
 ### .NET IL passes
 
@@ -91,6 +96,10 @@ penumbra payload.ps1 -o out/payload.obf.ps1
 
 # Cherry-pick passes
 penumbra payload.ps1 --passes rename,encode
+
+# Obfuscate a Python or Bash script (auto-detects language)
+penumbra exploit.py
+penumbra reverse_shell.sh
 
 # Obfuscate a .NET assembly (all default passes)
 penumbra implant.exe

@@ -12,6 +12,7 @@ from rich.console import Console
 # Trigger pass registration by importing pipeline sub-packages
 import penumbra.dotnet  # noqa: F401
 import penumbra.ps  # noqa: F401
+import penumbra.script  # noqa: F401
 from penumbra import __version__
 from penumbra.detector import detect
 from penumbra.pipeline import resolve_passes, run
