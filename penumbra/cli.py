@@ -74,6 +74,10 @@ def main(
     embed: Annotated[
         bool, typer.Option("--embed", help="Wrap output in an in-memory loader (dotnet-il)")
     ] = False,
+    host: Annotated[
+        Path | None,
+        typer.Option("--host", help="Host binary for trojanized embed (dotnet-il)"),
+    ] = None,
     safe_rename: Annotated[
         bool, typer.Option("--safe-rename", help="Enable safe-rename mode")
     ] = False,
@@ -105,6 +109,10 @@ def main(
     if verbose:
         console.print(f"[bold]Pipeline:[/bold] {pipe_type.value}")
 
+    # --host implies --embed
+    if host and not embed:
+        embed = True
+
     # Resolve passes
     pass_names = [p.strip() for p in passes.split(",")] if passes else None
     if embed and pass_names and "embed" not in pass_names:
@@ -117,7 +125,15 @@ def main(
         console.print(f"[bold]Passes:[/bold] {names}")
 
     # Build config and run
-    config = PassConfig(pipeline=pipe_type, safe_rename=safe_rename, verbose=verbose)
+    extra: dict[str, object] = {}
+    if host:
+        if not host.exists():
+            console.print(f"[red]Error:[/red] host binary not found: {host}")
+            raise typer.Exit(1)
+        extra["host"] = str(host)
+    config = PassConfig(
+        pipeline=pipe_type, safe_rename=safe_rename, verbose=verbose, extra=extra,
+    )
     result = run(data, resolved, config)
 
     # Determine output path
