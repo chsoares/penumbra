@@ -110,11 +110,7 @@ internal static class Program
         }
 
         Console.Error.WriteLine($"Writing output: {outputPath}");
-        var opts = new dnlib.DotNet.Writer.ModuleWriterOptions(module)
-        {
-            MetadataOptions = { Flags = dnlib.DotNet.Writer.MetadataFlags.KeepOldMaxStack }
-        };
-        module.Write(outputPath, opts);
+        module.Write(outputPath);
         Console.Error.WriteLine("Done.");
         return 0;
     }
@@ -483,17 +479,24 @@ internal static class Program
             foreach (var method in type.Methods)
             {
                 if (!method.HasBody) continue;
+                if (method.IsConstructor) continue;
+                if (method.Body.HasExceptionHandlers) continue;
+                if (method.IsVirtual || method.IsAbstract) continue;
+                if (IsCompilerGenerated(method)) continue;
                 var instrs = method.Body.Instructions;
-                if (instrs.Count < 2) continue;
+                if (instrs.Count < 5) continue;
 
-                // Insert NOP padding at random positions (work backwards to avoid index shift)
+                // Insert NOP padding at ~20% of positions (work backwards)
                 for (int i = instrs.Count - 1; i >= 1; i--)
                 {
-                    if (rng.NextDouble() < 0.3) // 30% chance at each position
+                    // Don't insert before branch targets or after branches
+                    if (instrs[i].OpCode.FlowControl == FlowControl.Branch) continue;
+                    if (instrs[i].OpCode.FlowControl == FlowControl.Cond_Branch) continue;
+                    if (instrs[i].OpCode.FlowControl == FlowControl.Return) continue;
+
+                    if (rng.NextDouble() < 0.2) // 20% chance
                     {
-                        int nopCount = rng.Next(1, 4); // 1-3 NOPs
-                        for (int n = 0; n < nopCount; n++)
-                            instrs.Insert(i, OpCodes.Nop.ToInstruction());
+                        instrs.Insert(i, OpCodes.Nop.ToInstruction());
                     }
                 }
 
@@ -990,6 +993,11 @@ internal static class Program
         I.Add(OpCodes.Ldloc.ToInstruction(body.Variables[5]));
         I.Add(OpCodes.Callvirt.ToInstruction(invoke));
         I.Add(OpCodes.Pop.ToInstruction());
+
+        // If the entry point returns non-void (e.g., int Main), push a default value
+        if (entryPoint.ReturnType.FullName != "System.Void")
+            I.Add(OpCodes.Ldc_I4_0.ToInstruction());
+
         I.Add(OpCodes.Ret.ToInstruction());
 
         body.SimplifyBranches();
