@@ -42,6 +42,21 @@ Default pass order: `dinvoke → rename → encrypt-strings → flow → strip-d
 
 > The `embed` pass is **opt-in** via `--embed` because it changes the output from an obfuscated assembly to a loader. Use `--host` to trojanize an existing binary for maximum camouflage.
 
+#### Embed: standalone vs. trojanized
+
+`--embed` alone generates a standalone loader targeting **.NET 8**, which requires the .NET runtime installed on the target. This is fine for dev/lab environments but **won't work on most target machines** (CTF boxes, engagements) where you can't install software.
+
+`--embed --host` injects the payload into an existing .NET binary, **inheriting the host's target framework**. If the host is a .NET Framework 4.x assembly (like most offensive tools), the output runs on any Windows without installing anything — .NET Framework 4.x is pre-installed since Windows 7.
+
+**For CTF/engagements, always use `--host`**:
+
+```bash
+# Download any small .NET Framework 4.x binary as a host
+penumbra implant.exe --embed --host ./legit-tool.exe
+```
+
+The host can be any .NET Framework assembly — version doesn't matter (4.0, 4.5, 4.7.2, etc.), only that it's .NET Framework and not .NET Core/5+. Without `--host`, IL obfuscation passes (01-03 style) also preserve the original framework, so they always work.
+
 ---
 
 ## Installation
