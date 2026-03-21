@@ -31,11 +31,11 @@ Powered by [dnlib](https://github.com/0xd4d/dnlib) via a C# subprocess worker:
 - **encrypt-strings** — XOR-encrypt string literals with injected IL-level decryptor
 - **flow** — insert NOP padding and opaque predicates
 - **strip-debug** — remove `DebuggableAttribute`, PDB info, compiler attributes
-- **embed** — wrap the obfuscated assembly in a new .NET loader that decrypts and loads the payload in-memory via `Assembly.Load(byte[])`. The original assembly never touches disk. This should be the **last pass** in the chain
+- **embed** *(opt-in)* — wrap the obfuscated assembly in a new .NET loader that decrypts and loads the payload in-memory via `Assembly.Load(byte[])`. The original assembly never touches disk. Enable with `--embed`. With `--host`, injects the payload into an existing legitimate .NET binary instead of generating a loader from scratch
 
 Default pass order: `dinvoke → rename → encrypt-strings → flow → strip-debug`
 
-> **Note**: The `embed` pass is **opt-in** — it's not included in the default run because it changes the output from an obfuscated assembly to a loader executable. Enable it explicitly with `--passes` when you want in-memory delivery. Always put `embed` last in the chain.
+> The `embed` pass is **opt-in** via `--embed` because it changes the output from an obfuscated assembly to a loader. Use `--host` to trojanize an existing binary for maximum camouflage.
 
 ---
 
@@ -92,14 +92,17 @@ penumbra payload.ps1 -o out/payload.obf.ps1
 # Cherry-pick passes
 penumbra payload.ps1 --passes rename,encode
 
-# Obfuscate a .NET assembly (all passes including in-memory embed)
-penumbra implant.exe --verbose
+# Obfuscate a .NET assembly (all default passes)
+penumbra implant.exe
 
-# Without in-memory embedding (directly executable output)
-penumbra implant.exe --passes dinvoke,rename,encrypt-strings,flow,strip-debug
+# With in-memory loader (payload never touches disk)
+penumbra implant.exe --embed
 
-# Minimal obfuscation + embed (rename + encrypt + loader wrapper)
-penumbra implant.exe --passes rename,encrypt-strings,embed
+# Trojanized — inject into a legitimate .NET binary
+penumbra implant.exe --embed --host /path/to/legit-tool.exe
+
+# Cherry-pick passes + embed
+penumbra implant.exe --passes rename,encrypt-strings --embed
 
 # Force pipeline type
 penumbra tool.dll --pipeline dotnet-il --passes rename,encrypt-strings

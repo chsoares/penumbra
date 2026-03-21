@@ -90,10 +90,30 @@ Set PE subsystem to Windows GUI in the loader output.
 
 **Complexity**: Trivial.
 
+### 6. Cross-pipeline embedding (PS1 → .NET → trojanized host)
+
+Wrap an obfuscated PS1 script inside a .NET assembly that executes it via `System.Management.Automation`, then embed that assembly in a trojanized host.
+
+```bash
+penumbra payload.ps1 --embed --host NuGet.exe
+# Internally: PS1 passes → .NET wrapper (PowerShell.Create().AddScript()) → encrypt → inject
+```
+
+**Why it matters**: Allows delivering PS1 payloads as trojanized .NET binaries. The PS1 never touches disk, never passes through `powershell.exe` (which is monitored by EDR), and the host binary looks legitimate.
+
+**Implementation**:
+- Detect cross-pipeline scenario: input is PS1 but `--embed`/`--host` targets .NET
+- After PS1 passes, generate a minimal C# project that embeds the obfuscated PS1 as a string and calls `PowerShell.Create().AddScript(script).Invoke()`
+- Compile to a .NET assembly, then feed into the normal embed/trojanize flow
+- Requires `System.Management.Automation` NuGet package in the wrapper project
+
+**Complexity**: Medium. The PS1-to-.NET wrapper is straightforward, the challenge is handling argument passing and output capture from the PowerShell runspace.
+
 ## Suggested priority
 
-1. Entropy reduction — quick win, directly addresses `Static AI` / `ml.score` detections
-2. Payload fragmentation — quick win, complements entropy reduction
-3. Heuristic-bypass naming — quick win
-4. Trojanized assembly — highest impact but most complex
-5. Hide console — trivial
+1. ~~Entropy reduction~~ — DONE (junk classes with low-entropy strings)
+2. ~~Payload fragmentation~~ — DONE (8KB chunks across multiple classes)
+3. ~~Heuristic-bypass naming~~ — DONE (plausible verb+noun identifiers)
+4. ~~Trojanized assembly~~ — DONE (`--host` flag)
+5. ~~Hide console~~ — DONE (WinExe subsystem)
+6. Cross-pipeline embedding — next major feature
