@@ -71,6 +71,9 @@ def main(
         str | None,
         typer.Option("--passes", help="Comma-separated pass names"),
     ] = None,
+    embed: Annotated[
+        bool, typer.Option("--embed", help="Wrap output in an in-memory loader (dotnet-il)")
+    ] = False,
     safe_rename: Annotated[
         bool, typer.Option("--safe-rename", help="Enable safe-rename mode")
     ] = False,
@@ -104,7 +107,10 @@ def main(
 
     # Resolve passes
     pass_names = [p.strip() for p in passes.split(",")] if passes else None
-    resolved = resolve_passes(pipe_type, pass_names)
+    if embed and pass_names and "embed" not in pass_names:
+        pass_names.append("embed")
+    opt_in = ["embed"] if embed and not pass_names else None
+    resolved = resolve_passes(pipe_type, pass_names, include_opt_in=opt_in)
 
     if verbose:
         names = ", ".join(p.name for p in resolved)
