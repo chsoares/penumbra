@@ -82,6 +82,17 @@ class DotnetFlowPass:
         return _invoke_worker(data, "flow", config)
 
 
+class DotnetDInvokePass:
+    """Mutate PInvoke imports to DInvoke runtime resolution."""
+
+    @property
+    def name(self) -> str:
+        return "dinvoke"
+
+    def apply(self, data: bytes, config: PassConfig) -> bytes:
+        return _invoke_worker(data, "dinvoke", config)
+
+
 class DotnetStripDebugPass:
     """Remove debug attributes and PDB state from the assembly."""
 
