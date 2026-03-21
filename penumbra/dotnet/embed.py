@@ -83,9 +83,13 @@ def _generate_junk_class(used_names: set[str] | None = None) -> str:
     lines = [f"internal sealed class {cls}", "{"]
 
     # Add 3-5 fake fields
+    used_fields: set[str] = set()
     for _ in range(secrets.randbelow(3) + 3):
         t = secrets.choice(_TYPES_FOR_JUNK)
         name = _plausible_field()
+        while name in used_fields:
+            name = _plausible_field() + str(len(used_fields))
+        used_fields.add(name)
         if t == "string":
             # Low-entropy strings that bring down the overall Shannon entropy
             val = secrets.choice([
@@ -111,8 +115,12 @@ def _generate_junk_class(used_names: set[str] | None = None) -> str:
             lines.append(f"    private static readonly {t} {name} = {secrets.randbelow(100)}.0f;")
 
     # Add 2-3 fake methods
+    used_methods: set[str] = set()
     for _ in range(secrets.randbelow(2) + 2):
         method = _plausible_name()
+        while method in used_methods:
+            method = _plausible_name() + str(len(used_methods))
+        used_methods.add(method)
         ret = secrets.choice(["void", "bool", "int", "string"])
         lines.append(f"    internal static {ret} {method}()")
         lines.append("    {")
