@@ -1,8 +1,16 @@
-"""Demo script — runs the moon spinner for 10 seconds so you can see the animation."""
+"""Demo script — shows the per-pass spinner output with fake passes."""
 
 import time
 
-from penumbra.spinner import MoonSpinner
+from penumbra.spinner import PassSpinner, write_done
 
-with MoonSpinner():
-    time.sleep(10)
+passes = ["rename", "encrypt-strings", "flow", "strip-debug", "embed"]
+
+for name in passes:
+    spinner = PassSpinner(name)
+    spinner.start()
+    # Simulate work (2s per pass)
+    time.sleep(2)
+    spinner.stop(ok=True, verbose=True)
+
+write_done()

@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-from rich.console import Console
-
-from penumbra.spinner import MoonSpinner
+from penumbra.spinner import PassSpinner, write_done, write_fail
 from penumbra.types import Pass, PassConfig, PipelineType
 
 _REGISTRY: dict[PipelineType, list[Pass]] = {}
-
-console = Console(stderr=True)
 
 
 def register_pipeline(pipeline_type: PipelineType, passes: list[Pass]) -> None:
@@ -60,20 +56,20 @@ def resolve_passes(
 
 
 def run(data: bytes, passes: list[Pass], config: PassConfig) -> bytes:
-    """Execute passes sequentially, folding data through each one."""
-    spinner = MoonSpinner()
-    if not config.verbose:
-        spinner.start()
-
-    ok = False
+    """Execute passes sequentially with per-pass spinner animation."""
+    result = data
     try:
-        result = data
         for p in passes:
-            if config.verbose:
-                console.print(f"  [dim]→ running pass:[/dim] [bold]{p.name}[/bold]")
-            result = p.apply(result, config)
-        ok = True
+            spinner = PassSpinner(p.name)
+            spinner.start()
+            ok = False
+            try:
+                result = p.apply(result, config)
+                ok = True
+            finally:
+                spinner.stop(ok=ok, verbose=config.verbose)
+        write_done()
         return result
-    finally:
-        if not config.verbose:
-            spinner.stop(done=ok)
+    except Exception:
+        write_fail()
+        raise

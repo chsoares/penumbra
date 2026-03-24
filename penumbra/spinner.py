@@ -6,6 +6,7 @@ import itertools
 import secrets
 import sys
 import threading
+import time
 
 # Full 28-frame lunar cycle using Nerd Font weather icons:
 #   full → waning gibbous → third quarter → waning crescent →
@@ -48,61 +49,76 @@ _NOUNS = [
 ]
 
 # ANSI colors (match cli.py palette)
-_M = "\033[38;5;5m"    # magenta — moon
-_G = "\033[38;5;245m"  # light gray — done icon
+_M = "\033[38;5;5m"    # magenta — moon/icons
 _T = "\033[38;5;240m"  # dark gray — text
+_D = "\033[38;5;245m"  # light gray — dim details
 _R = "\033[0m"         # reset
 
-# Done icon: Nerd Font checkmark (U+F1829)
-_DONE_ICON = "\U000f1829"
+# Nerd Font icons
+_DONE_ICON = "\U000f1829"  # checkmark
+_PASS_ICON = "\uf4ee"      # moon (same as banner)
 
 
 def _random_phrase() -> str:
     return f"{secrets.choice(_VERBS)} {secrets.choice(_NOUNS)}"
 
 
-class MoonSpinner:
-    """Animated moon-phase spinner that runs in a background thread."""
+class PassSpinner:
+    """Animated spinner for a single pass execution."""
 
-    def __init__(self, interval: float = 0.12) -> None:
+    def __init__(self, pass_name: str, interval: float = 0.12) -> None:
+        self._pass_name = pass_name
         self._interval = interval
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._phrase = _random_phrase()
         self._phase_cycle = itertools.cycle(_MOON_PHASES)
         self._ticks = 0
+        self._start_time = 0.0
 
     def _animate(self) -> None:
         while not self._stop_event.is_set():
             moon = next(self._phase_cycle)
-            # Rotate phrase every full moon cycle
             if self._ticks > 0 and self._ticks % len(_MOON_PHASES) == 0:
                 self._phrase = _random_phrase()
-            line = f"\r{_M}{moon} {_T}{self._phrase}...{_R}\033[K"
+            line = (
+                f"\r  {_M}{moon} {_T}{self._pass_name}"
+                f" {_D}— {self._phrase}...{_R}\033[K"
+            )
             sys.stderr.write(line)
             sys.stderr.flush()
             self._ticks += 1
             self._stop_event.wait(self._interval)
 
     def start(self) -> None:
-        """Start the spinner animation."""
+        self._start_time = time.monotonic()
         self._thread = threading.Thread(target=self._animate, daemon=True)
         self._thread.start()
 
-    def stop(self, done: bool = True) -> None:
-        """Stop the spinner and show completion message."""
+    def stop(self, ok: bool = True, verbose: bool = False) -> None:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join()
-        if done:
-            sys.stderr.write(f"\r{_M}{_DONE_ICON} {_T}payload cloaked.{_R}\033[K\n")
+        elapsed = time.monotonic() - self._start_time
+        if ok:
+            detail = ""
+            if verbose:
+                detail = f" {_D}({elapsed:.1f}s){_R}"
+            sys.stderr.write(
+                f"\r  {_M}{_DONE_ICON} {_T}{self._pass_name}{detail}{_R}\033[K\n"
+            )
         else:
             sys.stderr.write("\r\033[K")
         sys.stderr.flush()
 
-    def __enter__(self) -> MoonSpinner:
-        self.start()
-        return self
 
-    def __exit__(self, *_: object) -> None:
-        self.stop()
+def write_done() -> None:
+    """Write the final 'payload cloaked.' message."""
+    sys.stderr.write(f"{_M}{_DONE_ICON} {_T}payload cloaked.{_R}\n")
+    sys.stderr.flush()
+
+
+def write_fail() -> None:
+    """Clear spinner line on failure."""
+    sys.stderr.write("\r\033[K")
+    sys.stderr.flush()

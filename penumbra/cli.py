@@ -118,9 +118,6 @@ def main(
     else:
         pipe_type = detect(input_file, data)
 
-    if verbose:
-        console.print(f"[bold]Pipeline:[/bold] {pipe_type.value}")
-
     # --host implies --embed
     if host and not embed:
         embed = True
@@ -131,10 +128,6 @@ def main(
         pass_names.append("embed")
     opt_in = ["embed"] if embed and not pass_names else None
     resolved = resolve_passes(pipe_type, pass_names, include_opt_in=opt_in)
-
-    if verbose:
-        names = ", ".join(p.name for p in resolved)
-        console.print(f"[bold]Passes:[/bold] {names}")
 
     # Build config and run
     extra: dict[str, object] = {}
