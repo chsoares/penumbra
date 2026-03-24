@@ -19,7 +19,7 @@ Modular obfuscation toolkit with composable pass architecture. Auto-detects file
 ### PS1 passes
 
 - **amsi** — prepend AMSI bypass via reflection with self-obfuscated strings
-- **rename** — replace user-defined variables and function names with random identifiers
+- **rename** — replace user-defined variables and function names with plausible identifiers
 - **tokenize** — fragment suspicious string literals (`Invoke-Expression`, `AmsiUtils`, etc.)
 - **encode** — wrap everything in Base64 + `Invoke-Expression` decoder stub
 
@@ -31,16 +31,16 @@ Modular obfuscation toolkit with composable pass architecture. Auto-detects file
 ### Shellcode passes
 
 - **encrypt** — AES-256-CBC encrypt the raw shellcode (not XOR — AES decryption uses Windows CNG APIs that look legitimate to AV, while XOR loops are a classic malware signature)
-- **loader** — generate a .NET Framework 4.7.2 executable that decrypts and runs the shellcode in memory via `VirtualAlloc` + `CreateThread`. Includes sandbox evasion (sleep acceleration detection, CPU count check) and HWBP+VEH AMSI bypass. Output uses plausible names, fragmented payload, and junk code
+- **loader** — generate a .NET Framework 4.7.2 executable that decrypts and runs the shellcode in memory via direct syscalls (`NtAllocateVirtualMemory` + `NtCreateThreadEx` — bypasses EDR hooks on ntdll). Includes sandbox evasion (sleep acceleration, CPU count), HWBP+VEH AMSI bypass, plausible names, fragmented payload, and junk code. Use `--format ps1` for a PowerShell loader instead
 
 ### .NET IL passes
 
 Powered by [dnlib](https://github.com/0xd4d/dnlib) via a C# subprocess worker:
 
 - **dinvoke** — convert static `[DllImport]` PInvoke calls to runtime DInvoke resolution via `NativeLibrary.Load` + `Marshal.GetDelegateForFunctionPointer<T>`. Removes native function names and DLL names from the PE import table. Skips methods with complex marshalling (by-ref structs, callbacks)
-- **rename** — randomize type, method, field, and property names (`--safe-rename` to skip reflection targets)
-- **encrypt-strings** — XOR-encrypt string literals with injected IL-level decryptor
-- **flow** — insert NOP padding and opaque predicates
+- **rename** — randomize type, method, field, and property names using plausible identifiers (`GetServiceHandler`, `currentBuffer`) instead of random hex. Use `--safe-rename` to skip reflection targets
+- **encrypt-strings** — split string literals via `String.Concat` to break signature-based detection
+- **flow** — insert NOP padding to shift instruction offsets and defeat pattern matching
 - **strip-debug** — remove `DebuggableAttribute`, PDB info, compiler attributes
 - **embed** *(opt-in)* — wrap the obfuscated assembly in a new .NET loader that decrypts and loads the payload in-memory via `Assembly.Load(byte[])`. The original assembly never touches disk. Enable with `--embed`. With `--host`, injects the payload into an existing legitimate .NET binary instead of generating a loader from scratch
 
@@ -76,7 +76,7 @@ The host can be any .NET Framework assembly — version doesn't matter (4.0, 4.5
 | **.NET 8 SDK** | DOTNET-IL pipeline only | `sudo pacman -S dotnet-sdk-8.0` | [dotnet.microsoft.com](https://dotnet.microsoft.com/download) |
 | **Nerd Font** | Terminal icons (optional) | Any [Nerd Font](https://www.nerdfonts.com/) in your terminal | Same |
 
-> The .NET SDK is **only** needed if you use the `dotnet-il` pipeline. The PS1 pipeline is pure Python with zero external dependencies.
+> The .NET SDK is needed for the `dotnet-il` and `shellcode` pipelines. The PS1 and Script pipelines are pure Python with zero external dependencies.
 
 ### Install as a tool (recommended)
 
@@ -122,9 +122,10 @@ penumbra payload.ps1 --passes rename,encode
 penumbra exploit.py
 penumbra reverse_shell.sh
 
-# Shellcode: AES-encrypt + generate loader with sandbox evasion
+# Shellcode: AES-encrypt + generate loader with sandbox evasion + direct syscalls
 penumbra payload.bin
 penumbra payload.bin --host /path/to/legit-tool.exe
+penumbra payload.bin --format ps1 -o loader.ps1
 
 # Obfuscate a .NET assembly (all default passes)
 penumbra implant.exe

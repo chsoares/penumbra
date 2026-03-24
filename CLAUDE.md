@@ -12,6 +12,7 @@ Input file → Detector → Pipeline type → Resolve passes → Run passes → 
 - **Pipeline** (`penumbra/pipeline.py`): registry + sequential pass runner
 - **Passes**: stateless transforms registered per pipeline type
 - **CLI** (`penumbra/cli.py`): Typer single-command app
+- **C# Worker** (`dotnet-worker/`): dnlib-based IL manipulation, split into `Passes/` directory
 
 ## Pass Contract
 
