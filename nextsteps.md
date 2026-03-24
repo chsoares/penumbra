@@ -109,11 +109,113 @@ penumbra payload.ps1 --embed --host NuGet.exe
 
 **Complexity**: Medium. The PS1-to-.NET wrapper is straightforward, the challenge is handling argument passing and output capture from the PowerShell runspace.
 
+---
+
+## Shellcode Pipeline (new)
+
+New pipeline for raw shellcode (`.bin`, `.raw`) — meterpreter, beacon, custom shellcode.
+
+```bash
+# Basic: AES-encrypt + generate C# loader
+penumbra payload.bin -o loader.exe
+
+# Trojanized in a legit binary
+penumbra payload.bin --host nuget.exe -o nuget.exe
+
+# As PowerShell script
+penumbra payload.bin --format ps1 -o loader.ps1
+```
+
+No `--embed` needed — shellcode always needs a loader, so embedding is implicit.
+
+### MVP Passes
+
+#### 1. `encrypt` — AES-256-CBC encryption
+
+Encrypt the raw shellcode with AES-256 (not XOR — XOR is detected by modern AV, AES is not). Random key + IV per invocation. The loader decrypts at runtime using `System.Security.Cryptography.Aes`.
+
+**Why AES over XOR**: HTB Academy defense evasion module confirms XOR-encrypted meterpreter is detected, AES passes. AES output is indistinguishable from random data to heuristic scanners.
+
+#### 2. `loader` — Generate executable that runs shellcode in memory
+
+C# loader (.NET Framework 4.x) that:
+- Decrypts AES payload at runtime
+- `VirtualAlloc` with `PAGE_EXECUTE_READWRITE`
+- `Marshal.Copy` shellcode into allocated memory
+- `CreateThread` to execute
+
+Output is a `.exe` that runs on any Windows. Can be trojanized with `--host`.
+
+The C# loader can then pass through the dotnet-il pipeline (rename, encrypt-strings, flow) for additional obfuscation.
+
+#### 3. `sandbox-check` — Anti-sandbox evasion
+
+Insert checks before execution:
+- **Sleep acceleration detection**: `Sleep(2000)`, check if actual elapsed time < 1500ms (sandbox fast-forwards sleeps)
+- **CPU count**: `Environment.ProcessorCount < 2` → likely sandbox
+- **RAM check**: `< 2GB` → likely sandbox
+- **User interaction**: check for recent mouse movement or key presses
+- **Domain join**: workgroup machines in enterprise environments are suspicious
+
+If any check fails, exit silently without executing the shellcode.
+
+### Future Improvements
+
+#### 4. Direct syscalls (high impact)
+
+Replace PInvoke calls (`VirtualAlloc`, `CreateThread`) with direct `NtAllocateVirtualMemory` / `NtCreateThreadEx` syscalls. PInvoke goes through `ntdll.dll` which EDRs hook. Direct syscalls skip the hooks entirely.
+
+**Implementation**: emit the syscall stub as raw bytes (`mov r10, rcx; mov eax, SSN; syscall; ret`) with the correct System Service Number for the target Windows version. Requires version detection at runtime.
+
+**Complexity**: Medium-high. Syscall numbers change per Windows build.
+
+#### 5. Process injection
+
+Instead of executing shellcode in the current process (where EDR monitors everything), inject into a remote legitimate process:
+
+- **CreateRemoteThread**: classic, but monitored by most EDRs
+- **QueueUserAPC / NtQueueApcThread**: queue shellcode as an APC in a suspended thread of a target process
+- **Process hollowing**: create a suspended process, unmap its image, map shellcode in its place
+
+**Implementation**: add a `--inject <process>` flag. Loader spawns/opens the target process and injects instead of executing locally.
+
+**Complexity**: Medium-high.
+
+#### 6. Sleep obfuscation
+
+During execution (after shellcode is running), encrypt the shellcode in memory during long sleep periods to evade memory scanning:
+
+- Before sleep: `VirtualProtect(RW)` → encrypt shellcode bytes in-place → `VirtualProtect(NoAccess)`
+- After sleep: `VirtualProtect(RW)` → decrypt → `VirtualProtect(RX)` → continue execution
+
+This is different from sandbox-check (which runs before execution). Sleep obfuscation runs continuously during the shellcode's lifetime. Requires the loader to hook the shellcode's sleep calls or use a callback timer.
+
+**Complexity**: High. Requires understanding the shellcode's sleep mechanism (Cobalt Strike's `sleep` command, meterpreter's transport sleep, etc.).
+
+---
+
+## CLR nLoadImage Unhook (debugging needed)
+
+Implementation exists in `embed.py` (disabled). Based on `github.com/hwbp/CLR-Unhook`:
+- Pattern scan for `"nLoadImage"` string in `clr.dll` memory
+- Find function pointer in InternalCall table
+- Read clean 30 bytes from disk
+- Overwrite hooked prologue
+
+Currently crashes silently — likely RVA mismatch between disk file and memory-mapped module. The disk file RVA may not correspond to the runtime virtual address due to section alignment differences. Needs investigation with a debugger on Windows.
+
+---
+
 ## Suggested priority
 
-1. ~~Entropy reduction~~ — DONE (junk classes with low-entropy strings)
-2. ~~Payload fragmentation~~ — DONE (8KB chunks across multiple classes)
-3. ~~Heuristic-bypass naming~~ — DONE (plausible verb+noun identifiers)
-4. ~~Trojanized assembly~~ — DONE (`--host` flag)
-5. ~~Hide console~~ — DONE (WinExe subsystem)
-6. Cross-pipeline embedding — next major feature
+1. ~~Entropy reduction~~ — DONE
+2. ~~Payload fragmentation~~ — DONE
+3. ~~Heuristic-bypass naming~~ — DONE
+4. ~~Trojanized assembly~~ — DONE
+5. ~~Hide console~~ — DONE
+6. **Shellcode pipeline MVP** (encrypt + loader + sandbox-check) — next
+7. Cross-pipeline embedding (PS1 → .NET)
+8. CLR nLoadImage unhook debugging
+9. Shellcode: direct syscalls
+10. Shellcode: process injection
+11. Shellcode: sleep obfuscation
