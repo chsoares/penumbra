@@ -161,13 +161,9 @@ If any check fails, exit silently without executing the shellcode.
 
 ### Future Improvements
 
-#### 4. Direct syscalls (high impact)
+#### 4. Direct syscalls (high impact) — DONE
 
-Replace PInvoke calls (`VirtualAlloc`, `CreateThread`) with direct `NtAllocateVirtualMemory` / `NtCreateThreadEx` syscalls. PInvoke goes through `ntdll.dll` which EDRs hook. Direct syscalls skip the hooks entirely.
-
-**Implementation**: emit the syscall stub as raw bytes (`mov r10, rcx; mov eax, SSN; syscall; ret`) with the correct System Service Number for the target Windows version. Requires version detection at runtime.
-
-**Complexity**: Medium-high. Syscall numbers change per Windows build.
+Shellcode loader now uses `NtAllocateVirtualMemory` and `NtCreateThreadEx` via direct syscall stubs. SSNs resolved dynamically from clean `ntdll.dll` on disk. Bypasses EDR hooks in ntdll.
 
 #### 5. Process injection
 
@@ -213,9 +209,11 @@ Currently crashes silently — likely RVA mismatch between disk file and memory-
 3. ~~Heuristic-bypass naming~~ — DONE
 4. ~~Trojanized assembly~~ — DONE
 5. ~~Hide console~~ — DONE
-6. **Shellcode pipeline MVP** (encrypt + loader + sandbox-check) — next
-7. Cross-pipeline embedding (PS1 → .NET)
-8. CLR nLoadImage unhook debugging
-9. Shellcode: direct syscalls
-10. Shellcode: process injection
-11. Shellcode: sleep obfuscation
+6. ~~Shellcode pipeline MVP~~ — DONE (encrypt AES + loader + sandbox-check)
+7. ~~Shellcode: direct syscalls~~ — DONE (NtAllocateVirtualMemory/NtCreateThreadEx)
+8. ~~PS1 format loader~~ — DONE (`--format ps1`)
+9. ~~Plausible rename names~~ — DONE (NounNoun types, VerbNoun methods)
+10. Cross-pipeline embedding (PS1 → .NET)
+11. CLR nLoadImage unhook debugging
+12. Shellcode: process injection
+13. Shellcode: sleep obfuscation
