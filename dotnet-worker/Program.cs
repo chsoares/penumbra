@@ -492,18 +492,34 @@ internal static class Program
                 var instrs = method.Body.Instructions;
                 if (instrs.Count < 5) continue;
 
-                // Insert NOP padding at ~20% of positions (work backwards)
+                // Collect all branch target instructions — never insert before these
+                var branchTargets = new HashSet<Instruction>();
+                foreach (var instr in instrs)
+                {
+                    if (instr.Operand is Instruction target)
+                        branchTargets.Add(target);
+                    if (instr.Operand is Instruction[] targets)
+                        foreach (var t in targets)
+                            branchTargets.Add(t);
+                }
+
+                // Insert NOP padding at safe positions only (work backwards)
                 for (int i = instrs.Count - 1; i >= 1; i--)
                 {
-                    // Don't insert before branch targets or after branches
-                    if (instrs[i].OpCode.FlowControl == FlowControl.Branch) continue;
-                    if (instrs[i].OpCode.FlowControl == FlowControl.Cond_Branch) continue;
-                    if (instrs[i].OpCode.FlowControl == FlowControl.Return) continue;
+                    var cur = instrs[i];
+                    // Skip branch targets — inserting before them confuses stack analysis
+                    if (branchTargets.Contains(cur)) continue;
+                    // Skip flow-control instructions
+                    if (cur.OpCode.FlowControl == FlowControl.Branch) continue;
+                    if (cur.OpCode.FlowControl == FlowControl.Cond_Branch) continue;
+                    if (cur.OpCode.FlowControl == FlowControl.Return) continue;
+                    if (cur.OpCode.FlowControl == FlowControl.Throw) continue;
+                    // Don't insert after a branch either
+                    if (i > 0 && instrs[i - 1].OpCode.FlowControl == FlowControl.Branch) continue;
+                    if (i > 0 && instrs[i - 1].OpCode.FlowControl == FlowControl.Cond_Branch) continue;
 
-                    if (rng.NextDouble() < 0.2) // 20% chance
-                    {
+                    if (rng.NextDouble() < 0.15) // 15% chance
                         instrs.Insert(i, OpCodes.Nop.ToInstruction());
-                    }
                 }
 
                 method.Body.SimplifyBranches();
