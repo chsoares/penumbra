@@ -39,7 +39,7 @@ Powered by [dnlib](https://github.com/0xd4d/dnlib) via a C# subprocess worker:
 
 - **dinvoke** — convert static `[DllImport]` PInvoke calls to runtime DInvoke resolution via `NativeLibrary.Load` + `Marshal.GetDelegateForFunctionPointer<T>`. Removes native function names and DLL names from the PE import table. Skips methods with complex marshalling (by-ref structs, callbacks)
 - **rename** — randomize type, method, field, and property names using plausible identifiers (`GetServiceHandler`, `currentBuffer`) instead of random hex. Use `--safe-rename` to skip reflection targets
-- **encrypt-strings** — split string literals via `String.Concat` to break signature-based detection
+- **encrypt-strings** — XOR-encrypt string literals with a runtime decryptor method. Original strings disappear entirely from the binary
 - **flow** — insert NOP padding to shift instruction offsets and defeat pattern matching
 - **strip-debug** — remove `DebuggableAttribute`, PDB info, compiler attributes
 - **embed** *(opt-in)* — wrap the obfuscated assembly in a new .NET loader that decrypts and loads the payload in-memory via `Assembly.Load(byte[])`. The original assembly never touches disk. Enable with `--embed`. With `--host`, injects the payload into an existing legitimate .NET binary instead of generating a loader from scratch
