@@ -467,8 +467,8 @@ class DotnetEmbedPass:
                 '<Project Sdk="Microsoft.NET.Sdk">\n'
                 "  <PropertyGroup>\n"
                 "    <OutputType>Library</OutputType>\n"
-                "    <TargetFramework>net8.0</TargetFramework>\n"
-                "    <ImplicitUsings>enable</ImplicitUsings>\n"
+                "    <TargetFramework>netstandard2.0</TargetFramework>\n"
+                "    <LangVersion>10</LangVersion>\n"
                 "  </PropertyGroup>\n"
                 "</Project>\n"
             )
