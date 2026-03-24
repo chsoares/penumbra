@@ -79,7 +79,7 @@ def test_detect_mz_native_pe(tmp_path: Path) -> None:
 
 
 def test_detect_unknown_raises(tmp_path: Path) -> None:
-    unknown = tmp_path / "data.bin"
+    unknown = tmp_path / "data.dat"
     unknown.write_bytes(b"\x00\x01\x02\x03")
     with pytest.raises(ValueError, match="Cannot detect"):
         detect(unknown)

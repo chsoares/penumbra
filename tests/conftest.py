@@ -22,3 +22,13 @@ def hello_ps1_bytes() -> bytes:
 @pytest.fixture()
 def complex_ps1_bytes() -> bytes:
     return (FIXTURES_DIR / "complex.ps1").read_bytes()
+
+
+@pytest.fixture()
+def shellcode_bin() -> Path:
+    return FIXTURES_DIR / "test.bin"
+
+
+@pytest.fixture()
+def shellcode_bytes() -> bytes:
+    return (FIXTURES_DIR / "test.bin").read_bytes()

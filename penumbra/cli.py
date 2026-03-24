@@ -13,6 +13,7 @@ from rich.console import Console
 import penumbra.dotnet  # noqa: F401
 import penumbra.ps  # noqa: F401
 import penumbra.script  # noqa: F401
+import penumbra.shellcode  # noqa: F401
 from penumbra import __version__
 from penumbra.detector import detect
 from penumbra.pipeline import resolve_passes, run
@@ -66,7 +67,10 @@ def main(
     ] = None,
     pipeline: Annotated[
         str | None,
-        typer.Option("--pipeline", help="Pipeline type (ps, dotnet-il, script, pe)"),
+        typer.Option(
+            "--pipeline",
+            help="Pipeline type (ps, dotnet-il, script, pe, shellcode)",
+        ),
     ] = None,
     passes: Annotated[
         str | None,
@@ -78,6 +82,13 @@ def main(
     host: Annotated[
         Path | None,
         typer.Option("--host", help="Host binary for trojanized embed (dotnet-il)"),
+    ] = None,
+    fmt: Annotated[
+        str | None,
+        typer.Option(
+            "--format",
+            help="Output format for shellcode (exe, ps1)",
+        ),
     ] = None,
     safe_rename: Annotated[
         bool, typer.Option("--safe-rename", help="Enable safe-rename mode")
@@ -129,18 +140,29 @@ def main(
     extra: dict[str, object] = {}
     if host:
         if not host.exists():
-            console.print(f"[red]Error:[/red] host binary not found: {host}")
+            console.print(
+                f"[red]Error:[/red] host binary not found: {host}"
+            )
             raise typer.Exit(1)
         extra["host"] = str(host)
+    if fmt:
+        extra["format"] = fmt
     config = PassConfig(
-        pipeline=pipe_type, safe_rename=safe_rename, verbose=verbose, extra=extra,
+        pipeline=pipe_type,
+        safe_rename=safe_rename,
+        verbose=verbose,
+        extra=extra,
     )
     result = run(data, resolved, config)
 
     # Determine output path
     if output is None:
         stem = input_file.stem
-        suffix = input_file.suffix
+        if pipe_type == PipelineType.SHELLCODE:
+            sc_fmt = fmt or "exe"
+            suffix = f".{sc_fmt}"
+        else:
+            suffix = input_file.suffix
         output = input_file.parent / f"{stem}.obf{suffix}"
 
     output.write_bytes(result)

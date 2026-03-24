@@ -14,6 +14,7 @@ class PipelineType(Enum):
     DOTNET_IL = "dotnet-il"
     SCRIPT = "script"
     PE = "pe"
+    SHELLCODE = "shellcode"
 
 
 @dataclass(frozen=True)

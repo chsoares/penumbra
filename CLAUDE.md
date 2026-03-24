@@ -26,6 +26,7 @@ Every pass implements the `Pass` protocol (`penumbra/types.py`):
 | `penumbra/ps/` | PS1 | Ready (amsi, rename, tokenize, encode) |
 | `penumbra/dotnet/` | .NET IL | Ready (dinvoke, rename, encrypt-strings, flow, strip-debug, embed) |
 | `penumbra/script/` | Python/Bash | Ready (wrap, encode) |
+| `penumbra/shellcode/` | Raw shellcode | Ready (encrypt, loader) |
 | `penumbra/pe/` | Native PE | Stub |
 
 ## Development

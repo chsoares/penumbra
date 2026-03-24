@@ -13,6 +13,7 @@ Modular obfuscation toolkit with composable pass architecture. Auto-detects file
 | **PS1** | `.ps1` scripts | `amsi` `rename` `tokenize` `encode` | Ready |
 | **DOTNET-IL** | `.exe` / `.dll` (.NET assemblies) | `dinvoke` `rename` `encrypt-strings` `flow` `strip-debug` `embed` | Ready |
 | **Script** | `.py` / `.sh` | `wrap` `encode` | Ready |
+| **Shellcode** | `.bin` / `.raw` | `encrypt` `loader` | Ready |
 | PE | Native binaries | — | Planned |
 
 ### PS1 passes
@@ -26,6 +27,11 @@ Modular obfuscation toolkit with composable pass architecture. Auto-detects file
 
 - **wrap** — wrap in a self-extracting heredoc (bash) or `exec(compile(...))` (Python)
 - **encode** — Base64-encode the script with a language-appropriate exec one-liner
+
+### Shellcode passes
+
+- **encrypt** — AES-256-CBC encrypt the raw shellcode (not XOR — AES decryption uses Windows CNG APIs that look legitimate to AV, while XOR loops are a classic malware signature)
+- **loader** — generate a .NET Framework 4.7.2 executable that decrypts and runs the shellcode in memory via `VirtualAlloc` + `CreateThread`. Includes sandbox evasion (sleep acceleration detection, CPU count check) and HWBP+VEH AMSI bypass. Output uses plausible names, fragmented payload, and junk code
 
 ### .NET IL passes
 
@@ -115,6 +121,10 @@ penumbra payload.ps1 --passes rename,encode
 # Obfuscate a Python or Bash script (auto-detects language)
 penumbra exploit.py
 penumbra reverse_shell.sh
+
+# Shellcode: AES-encrypt + generate loader with sandbox evasion
+penumbra payload.bin
+penumbra payload.bin --host /path/to/legit-tool.exe
 
 # Obfuscate a .NET assembly (all default passes)
 penumbra implant.exe
