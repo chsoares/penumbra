@@ -21,3 +21,9 @@ htmlcov/
 
 .env
 *.log
+
+# .NET build artifacts
+dotnet-worker/bin/
+dotnet-worker/obj/
+tools/*/bin/
+tools/*/obj/
