@@ -55,7 +55,12 @@ def resolve_passes(
     return defaults
 
 
-def run(data: bytes, passes: list[Pass], config: PassConfig) -> bytes:
+def run(
+    data: bytes,
+    passes: list[Pass],
+    config: PassConfig,
+    output_path: str = "",
+) -> bytes:
     """Execute passes sequentially with per-pass spinner animation."""
     result = data
     try:
@@ -68,7 +73,7 @@ def run(data: bytes, passes: list[Pass], config: PassConfig) -> bytes:
                 ok = True
             finally:
                 spinner.stop(ok=ok, verbose=config.verbose)
-        write_done()
+        write_done(output_path)
         return result
     except Exception:
         write_fail()

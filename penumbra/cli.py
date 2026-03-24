@@ -146,9 +146,7 @@ def main(
         verbose=verbose,
         extra=extra,
     )
-    result = run(data, resolved, config)
-
-    # Determine output path
+    # Determine output path before running (for display in spinner)
     if output is None:
         stem = input_file.stem
         if pipe_type == PipelineType.SHELLCODE:
@@ -158,8 +156,8 @@ def main(
             suffix = input_file.suffix
         output = input_file.parent / f"{stem}.obf{suffix}"
 
+    result = run(data, resolved, config, output_path=str(output))
     output.write_bytes(result)
-    console.print(f"[green]✓[/green] Written to {output}")
 
 
 if __name__ == "__main__":

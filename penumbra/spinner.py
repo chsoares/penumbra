@@ -55,8 +55,8 @@ _D = "\033[38;5;245m"  # light gray — dim details
 _R = "\033[0m"         # reset
 
 # Nerd Font icons
-_DONE_ICON = "\U000f1829"  # checkmark
-_PASS_ICON = "\uf4ee"      # moon (same as banner)
+_CHECK = "\uf00c"          # pass completion checkmark
+_DONE_ICON = "\U000f1829"  # final "payload cloaked" icon
 
 
 def _random_phrase() -> str:
@@ -82,7 +82,7 @@ class PassSpinner:
             if self._ticks > 0 and self._ticks % len(_MOON_PHASES) == 0:
                 self._phrase = _random_phrase()
             line = (
-                f"\r  {_M}{moon} {_T}{self._pass_name}"
+                f"\r{_M}{moon} {_T}{self._pass_name}"
                 f" {_D}— {self._phrase}...{_R}\033[K"
             )
             sys.stderr.write(line)
@@ -105,16 +105,17 @@ class PassSpinner:
             if verbose:
                 detail = f" {_D}({elapsed:.1f}s){_R}"
             sys.stderr.write(
-                f"\r  {_M}{_DONE_ICON} {_T}{self._pass_name}{detail}{_R}\033[K\n"
+                f"\r{_M}{_CHECK} {_T}{self._pass_name}{detail}{_R}\033[K\n"
             )
         else:
             sys.stderr.write("\r\033[K")
         sys.stderr.flush()
 
 
-def write_done() -> None:
-    """Write the final 'payload cloaked.' message."""
-    sys.stderr.write(f"{_M}{_DONE_ICON} {_T}payload cloaked.{_R}\n")
+def write_done(output_path: str = "") -> None:
+    """Write the final 'payload cloaked.' message with output path."""
+    path_str = f" {_D}→ {output_path}{_R}" if output_path else ""
+    sys.stderr.write(f"\n{_M}{_DONE_ICON} {_T}payload cloaked{path_str}{_R}\n")
     sys.stderr.flush()
 
 
