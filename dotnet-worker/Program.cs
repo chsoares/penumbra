@@ -126,6 +126,70 @@ internal static class Program
         return "_" + Guid.NewGuid().ToString("N")[..8];
     }
 
+    // ── Plausible name generation (for rename pass) ─────────────────────
+
+    private static readonly string[] Verbs = {
+        "Get", "Set", "Create", "Update", "Delete", "Process", "Handle",
+        "Parse", "Format", "Validate", "Transform", "Convert", "Load",
+        "Save", "Read", "Write", "Open", "Close", "Init", "Reset",
+        "Build", "Resolve", "Execute", "Dispatch", "Register", "Configure"
+    };
+
+    private static readonly string[] Nouns = {
+        "Service", "Config", "Data", "Context", "Manager", "Factory",
+        "Handler", "Provider", "Repository", "Controller", "Adapter",
+        "Processor", "Validator", "Formatter", "Converter", "Builder",
+        "Resolver", "Dispatcher", "Registry", "Cache", "Buffer",
+        "Channel", "Pipeline", "Session", "Token", "Descriptor"
+    };
+
+    private static readonly string[] FieldPrefixes = {
+        "current", "default", "cached", "internal", "primary",
+        "active", "pending", "last", "next", "base"
+    };
+
+    private static readonly Random NameRng = new Random();
+
+    private static string UniqueName(HashSet<string> used, Func<string> generator)
+    {
+        string name = generator();
+        if (used.Add(name)) return name;
+        // Collision — append incrementing suffix
+        for (int i = 2; ; i++)
+        {
+            string candidate = name + i;
+            if (used.Add(candidate)) return candidate;
+        }
+    }
+
+    /// <summary>Type names: NounNoun (e.g., ServiceManager, DataProcessor)</summary>
+    private static string RandomTypeName(HashSet<string> used)
+    {
+        return UniqueName(used, () =>
+            Nouns[NameRng.Next(Nouns.Length)] + Nouns[NameRng.Next(Nouns.Length)]);
+    }
+
+    /// <summary>Method names: VerbNoun (e.g., GetService, ProcessData)</summary>
+    private static string RandomMethodName(HashSet<string> used)
+    {
+        return UniqueName(used, () =>
+            Verbs[NameRng.Next(Verbs.Length)] + Nouns[NameRng.Next(Nouns.Length)]);
+    }
+
+    /// <summary>Field names: prefixNoun (e.g., currentBuffer, cachedConfig)</summary>
+    private static string RandomFieldName(HashSet<string> used)
+    {
+        return UniqueName(used, () =>
+            FieldPrefixes[NameRng.Next(FieldPrefixes.Length)] + Nouns[NameRng.Next(Nouns.Length)]);
+    }
+
+    /// <summary>Property names: Noun (e.g., Service, Config)</summary>
+    private static string RandomPropertyName(HashSet<string> used)
+    {
+        return UniqueName(used, () =>
+            Nouns[NameRng.Next(Nouns.Length)]);
+    }
+
     private static HashSet<string> CollectStringLiterals(ModuleDef module)
     {
         var strings = new HashSet<string>(StringComparer.Ordinal);
@@ -184,6 +248,12 @@ internal static class Program
         var entryPoint = module.EntryPoint;
         var literals = safeRename ? CollectStringLiterals(module) : new HashSet<string>();
 
+        // Track used names per category to guarantee uniqueness
+        var usedTypes = new HashSet<string>(StringComparer.Ordinal);
+        var usedMethods = new HashSet<string>(StringComparer.Ordinal);
+        var usedFields = new HashSet<string>(StringComparer.Ordinal);
+        var usedProps = new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var type in module.GetTypes().ToList())
         {
             if (type.IsGlobalModuleType) continue;
@@ -194,7 +264,7 @@ internal static class Program
 
             // Don't rename types with interfaces, enums, or value types
             if (!type.HasInterfaces && !type.IsEnum && !type.IsValueType)
-                type.Name = RandomId();
+                type.Name = RandomTypeName(usedTypes);
 
             foreach (var method in type.Methods)
             {
@@ -204,7 +274,7 @@ internal static class Program
                 if (method.IsSpecialName) continue;
                 if (IsCompilerGenerated(method)) continue;
                 if (safeRename && literals.Contains(method.Name.String)) continue;
-                method.Name = RandomId();
+                method.Name = RandomMethodName(usedMethods);
             }
 
             foreach (var field in type.Fields)
@@ -213,13 +283,13 @@ internal static class Program
                 // Skip fields with compiler-generated names (backing fields, closures)
                 if (field.Name.String.Contains('<') || field.Name.String.Contains('>')) continue;
                 if (safeRename && literals.Contains(field.Name.String)) continue;
-                field.Name = RandomId();
+                field.Name = RandomFieldName(usedFields);
             }
 
             foreach (var prop in type.Properties)
             {
                 if (safeRename && literals.Contains(prop.Name.String)) continue;
-                prop.Name = RandomId();
+                prop.Name = RandomPropertyName(usedProps);
             }
         }
     }
