@@ -24,6 +24,17 @@ _SUSPICIOUS: tuple[str, ...] = (
     "amsi",
     "AmsiUtils",
     "Bypass",
+    "Assembly.Load",
+    "GetType",
+    "GetField",
+    "SetValue",
+    "FromBase64String",
+    "DeflateStream",
+    "IO.Compression",
+    "IO.MemoryStream",
+    "WScript.Shell",
+    "schtasks",
+    "fodhelper",
 )
 
 _SUSPICIOUS_RE = re.compile(

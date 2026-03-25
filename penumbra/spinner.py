@@ -119,6 +119,12 @@ def write_done(output_path: str = "") -> None:
     sys.stderr.flush()
 
 
+def write_hint(command: str) -> None:
+    """Print an execution hint after the done message."""
+    sys.stderr.write(f"   {_M}⚡ run:{_R} {_D}{command}{_R}\n")
+    sys.stderr.flush()
+
+
 def write_fail() -> None:
     """Clear spinner line on failure."""
     sys.stderr.write("\r\033[K")

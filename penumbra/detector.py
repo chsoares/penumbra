@@ -17,6 +17,8 @@ _EXTENSION_MAP: dict[str, PipelineType] = {
     ".py": PipelineType.SCRIPT,
     ".sh": PipelineType.SCRIPT,
     ".bash": PipelineType.SCRIPT,
+    ".vbs": PipelineType.VBS,
+    ".vbe": PipelineType.VBS,
 }
 
 _SHEBANG_MAP: dict[str, PipelineType] = {

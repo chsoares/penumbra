@@ -15,6 +15,7 @@ class PipelineType(Enum):
     SCRIPT = "script"
     PE = "pe"
     SHELLCODE = "shellcode"
+    VBS = "vbs"
 
 
 @dataclass(frozen=True)

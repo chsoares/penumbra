@@ -1,5 +1,6 @@
 """Dotnet IL pipeline — register available passes."""
 
+from penumbra.dotnet.clm_bypass import ClmBypassPass
 from penumbra.dotnet.embed import DotnetEmbedPass
 from penumbra.dotnet.il_worker import (
     DotnetDInvokePass,
@@ -8,6 +9,7 @@ from penumbra.dotnet.il_worker import (
     DotnetRenamePass,
     DotnetStripDebugPass,
 )
+from penumbra.dotnet.lolbas import InstallUtilPass, RegAsmPass, Rundll32Pass
 from penumbra.pipeline import register_pipeline
 from penumbra.types import PipelineType
 
@@ -18,4 +20,8 @@ register_pipeline(PipelineType.DOTNET_IL, [
     DotnetFlowPass(),
     DotnetStripDebugPass(),
     DotnetEmbedPass(),
+    InstallUtilPass(),
+    RegAsmPass(),
+    Rundll32Pass(),
+    ClmBypassPass(),
 ])
