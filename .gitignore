@@ -27,3 +27,5 @@ dotnet-worker/bin/
 dotnet-worker/obj/
 tools/*/bin/
 tools/*/obj/
+penumbra/dotnet/worker/bin/
+penumbra/dotnet/worker/obj/
