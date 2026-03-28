@@ -20,11 +20,12 @@ def test_full_pipeline_all_passes() -> None:
     passes = resolve_passes(PipelineType.PS1)
     result = run(source, passes, _CFG).decode("utf-8")
 
-    # Output should contain base64 decoder stub (encode pass ran last).
-    assert "FromBase64String" in result
-    assert "Invoke-Expression" in result
+    # Output should contain obfuscated decoder stub (encode pass ran last).
+    stripped = result.replace("'", "").replace("+", "")
+    assert "FromBase64String" in stripped
+    assert "Expression" in stripped
 
-    # Extract the base64 payload and decode it.
+    # Extract the base64 payload (first quoted string).
     b64_str = result.split("'")[1]
     inner = base64.b64decode(b64_str).decode("utf-8")
 
@@ -32,7 +33,7 @@ def test_full_pipeline_all_passes() -> None:
     assert "$greeting" not in inner
     assert "$count" not in inner
 
-    # AMSI bypass should be present.
+    # AMSI bypass should be present (inside encoded block for default pipeline).
     assert "[Ref].Assembly" in inner
 
 
@@ -41,7 +42,8 @@ def test_selective_passes() -> None:
     passes = resolve_passes(PipelineType.PS1, ["rename", "encode"])
     result = run(source, passes, _CFG).decode("utf-8")
 
-    assert "FromBase64String" in result
+    stripped = result.replace("'", "").replace("+", "")
+    assert "FromBase64String" in stripped
 
     # Decode inner layer.
     b64_str = result.split("'")[1]

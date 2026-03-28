@@ -13,8 +13,10 @@ def test_output_contains_decoder_keywords(hello_ps1_bytes: bytes) -> None:
     config = PassConfig(pipeline=PipelineType.PS1)
     result = Base64EncodePass().apply(hello_ps1_bytes, config)
     text = result.decode("utf-8")
-    assert "FromBase64String" in text
-    assert "Invoke-Expression" in text
+    # Method names are split for evasion: ('FromB'+'ase64S'+'tring')
+    stripped = text.replace("'", "").replace("+", "")
+    assert "FromBase64String" in stripped
+    assert "Expression" in stripped
 
 
 def test_base64_is_reversible(hello_ps1_bytes: bytes) -> None:
