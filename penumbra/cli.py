@@ -275,9 +275,12 @@ def main(
             verbose=verbose,
             extra=extra,
         )
+        # Only rename — tokenize fragments the huge Base64 payload string
+        # into thousands of concatenations causing StackOverflow, and encode
+        # wraps it in another Base64+IEX layer that also overflows.
         resolved_ps1 = [
             p for p in resolve_passes(PipelineType.PS1)
-            if p.name not in ("amsi", "encode")
+            if p.name == "rename"
         ]
         result = run(ps1_data, resolved_ps1, ps1_config, output_path=str(output))
         output.write_bytes(result)
