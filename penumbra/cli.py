@@ -18,7 +18,7 @@ import penumbra.vbs  # noqa: F401
 from penumbra import __version__
 from penumbra.detector import detect
 from penumbra.pipeline import resolve_passes, run
-from penumbra.spinner import write_hint
+from penumbra.spinner import write_done, write_hint
 from penumbra.types import PassConfig, PipelineType
 
 console = Console(stderr=True)
@@ -266,24 +266,10 @@ def main(
         loader_pass = Ps1AssemblyLoaderPass()
         ps1_data = loader_pass.apply(obfuscated_asm, config)
 
-        # Stage 3: Run PS1 passes on the generated script.
-        # Skip the amsi pass — the user must run the AMSI bypass manually
-        # before executing the script (Defender detects any embedded bypass).
-        ps1_config = PassConfig(
-            pipeline=PipelineType.PS1,
-            safe_rename=safe_rename,
-            verbose=verbose,
-            extra=extra,
-        )
-        # Only rename — tokenize fragments the huge Base64 payload string
-        # into thousands of concatenations causing StackOverflow, and encode
-        # wraps it in another Base64+IEX layer that also overflows.
-        resolved_ps1 = [
-            p for p in resolve_passes(PipelineType.PS1)
-            if p.name == "rename"
-        ]
-        result = run(ps1_data, resolved_ps1, ps1_config, output_path=str(output))
-        output.write_bytes(result)
+        # No PS1 passes — the assembly is already obfuscated by dotnet-il.
+        # The PS1 loader is just a thin wrapper (decompress + Assembly.Load).
+        output.write_bytes(ps1_data)
+        write_done(str(output))
         # Write AMSI patch bypass to a .txt file alongside the output.
         # The user must paste this in PowerShell before running the script.
         bypass_path = output.with_suffix(".amsi.txt")
