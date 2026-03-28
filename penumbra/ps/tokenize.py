@@ -45,6 +45,9 @@ _SUSPICIOUS_RE = re.compile(
 # Match double-quoted or single-quoted strings.
 _STRING_RE = re.compile(r'"(?:[^"\\`]|`.|"")*"|\'(?:[^\']|\'\')*\'')
 
+# Match PS1 here-strings: @"..."@ and @'...'@
+_HERE_STRING_RE = re.compile(r'@".*?"@|@\'.*?\'@', re.DOTALL)
+
 
 def _fragment_concat(value: str) -> str:
     """Split *value* into random concatenation pieces."""
@@ -74,6 +77,24 @@ def _should_fragment(content: str) -> bool:
     return bool(_SUSPICIOUS_RE.search(content))
 
 
+def _build_protected_regions(source: str) -> list[tuple[int, int]]:
+    """Find regions that must not be tokenized (here-strings)."""
+    regions: list[tuple[int, int]] = []
+    for m in _HERE_STRING_RE.finditer(source):
+        regions.append((m.start(), m.end()))
+    return regions
+
+
+def _in_protected(pos: int, regions: list[tuple[int, int]]) -> bool:
+    """Check if a position falls inside a protected region."""
+    for start, end in regions:
+        if start <= pos < end:
+            return True
+        if start > pos:
+            break
+    return False
+
+
 class TokenizePass:
     """Fragment strings containing suspicious keywords via concatenation."""
 
@@ -83,8 +104,14 @@ class TokenizePass:
 
     def apply(self, data: bytes, config: PassConfig) -> bytes:  # noqa: ARG002
         source = data.decode("utf-8")
+        protected = _build_protected_regions(source)
 
         def _replace(m: re.Match[str]) -> str:
+            # Skip strings inside here-strings (@"..."@) — these often contain
+            # embedded C# code where string concatenation is invalid.
+            if protected and _in_protected(m.start(), protected):
+                return m.group(0)
+
             full = m.group(0)
             inner = full[1:-1]
 
