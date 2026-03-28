@@ -60,8 +60,14 @@ def run(
     passes: list[Pass],
     config: PassConfig,
     output_path: str = "",
+    *,
+    silent: bool = False,
 ) -> bytes:
-    """Execute passes sequentially with per-pass spinner animation."""
+    """Execute passes sequentially with per-pass spinner animation.
+
+    If silent=True, suppress the final 'payload cloaked' message.
+    Used for intermediate stages in cross-pipeline routing.
+    """
     result = data
     try:
         for p in passes:
@@ -73,7 +79,8 @@ def run(
                 ok = True
             finally:
                 spinner.stop(ok=ok, verbose=config.verbose)
-        write_done(output_path)
+        if not silent:
+            write_done(output_path)
         return result
     except Exception:
         write_fail()

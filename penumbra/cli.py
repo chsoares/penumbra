@@ -258,7 +258,7 @@ def main(
             [p.strip() for p in passes.split(",")] if passes else None
         )
         resolved_il = resolve_passes(PipelineType.DOTNET_IL, pass_names_list)
-        obfuscated_asm = run(data, resolved_il, config, output_path=str(output))
+        obfuscated_asm = run(data, resolved_il, config, silent=True)
 
         # Stage 2: Generate PS1 loader from obfuscated assembly
         from penumbra.ps.assembly_loader import Ps1AssemblyLoaderPass
@@ -276,7 +276,7 @@ def main(
         resolved_ps1 = resolve_passes(PipelineType.PS1)
         result = run(ps1_data, resolved_ps1, ps1_config, output_path=str(output))
         output.write_bytes(result)
-        write_hint(f"powershell -ep bypass -File {output} [args]")
+        write_hint(f"powershell -ep bypass -File {output}")
         raise typer.Exit()
 
     if clm_bypass and pipe_type == PipelineType.PS1:
@@ -285,7 +285,7 @@ def main(
             [p.strip() for p in passes.split(",")] if passes else None
         )
         resolved_ps1 = resolve_passes(PipelineType.PS1, pass_names_list)
-        obfuscated_ps1 = run(data, resolved_ps1, config, output_path=str(output))
+        obfuscated_ps1 = run(data, resolved_ps1, config, silent=True)
 
         # Stage 2: Wrap in CLM bypass exe
         from penumbra.dotnet.clm_bypass import ClmBypassPass
@@ -293,7 +293,6 @@ def main(
         clm_pass = ClmBypassPass()
         result = run(obfuscated_ps1, [clm_pass], config, output_path=str(output))
         output.write_bytes(result)
-        write_hint(f"Copy to C:\\Windows\\Tasks\\ then: {output.name} <base64_command>")
         raise typer.Exit()
 
     # --- Standard single-pipeline flow ---
