@@ -276,7 +276,8 @@ def main(
             extra=extra,
         )
         resolved_ps1 = [
-            p for p in resolve_passes(PipelineType.PS1) if p.name != "amsi"
+            p for p in resolve_passes(PipelineType.PS1)
+            if p.name not in ("amsi", "encode")
         ]
         result = run(ps1_data, resolved_ps1, ps1_config, output_path=str(output))
         output.write_bytes(result)
