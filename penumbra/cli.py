@@ -350,21 +350,10 @@ def _print_hint(
             f"/U {output}"
         )
     elif lolbas == "rundll32":
-        write_hint(
-            rf"C:\Windows\System32\rundll32.exe {output},DllMain"
-        )
+        write_hint(rf"C:\Windows\System32\rundll32.exe {output},DllMain")
     elif uac:
-        write_hint(
-            f"powershell -ep bypass -File {output}  "
-            "(hint: requires admin at medium integrity)"
-        )
-    elif inject is not None:
-        proc = inject if inject else "notepad.exe"
-        write_hint(f"{output}  (hint: injects into {proc}, ensure process is running)")
-    elif ps1_loader:
-        write_hint(f"powershell -ep bypass -File {output} [args]")
-    elif clm_bypass:
-        write_hint(f"Copy to C:\\Windows\\Tasks\\ then: {output.name} <base64_command>")
+        write_hint(f"powershell -ep bypass -File {output}")
+    pass
 
 
 if __name__ == "__main__":

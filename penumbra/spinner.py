@@ -121,7 +121,7 @@ def write_done(output_path: str = "") -> None:
 
 def write_hint(command: str) -> None:
     """Print an execution hint after the done message."""
-    sys.stderr.write(f"   {_M}⚡ run:{_R} {_D}{command}{_R}\n")
+    sys.stderr.write(f"{_M}\uf4f5 {_T}run: {_D}{command}{_R}\n")
     sys.stderr.flush()
 
 

