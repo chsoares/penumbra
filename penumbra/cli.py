@@ -317,6 +317,10 @@ def main(
         opt_in.append("inject")
 
     resolved = resolve_passes(pipe_type, pass_names_list, include_opt_in=opt_in)
+
+    # --inject replaces loader (inject expects encrypted shellcode, not a compiled exe)
+    if inject is not None and not pass_names_list:
+        resolved = [p for p in resolved if p.name != "loader"]
     result = run(data, resolved, config, output_path=str(output))
     output.write_bytes(result)
 
