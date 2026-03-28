@@ -21,22 +21,17 @@ class TestPs1AssemblyLoader:
         assert "Assembly" in stripped
         assert "EntryPoint" in text
 
-    def test_default_amsi_is_patch(self) -> None:
+    def test_no_amsi_bypass_inline(self) -> None:
+        """AMSI bypass should NOT be inside the loader script.
+
+        It must be placed outside the Base64+IEX block by the encode pass,
+        otherwise AMSI detects the bypass pattern before it can execute.
+        """
         cfg = PassConfig(pipeline=PipelineType.DOTNET_IL)
         result = Ps1AssemblyLoaderPass().apply(_FAKE_ASSEMBLY, cfg)
         text = result.decode("utf-8")
-        # Patch bypass uses VirtualProtect
-        assert "VirtualProtect" in text
-
-    def test_custom_amsi_technique(self) -> None:
-        cfg = PassConfig(
-            pipeline=PipelineType.DOTNET_IL,
-            extra={"amsi_technique": "reflection"},
-        )
-        result = Ps1AssemblyLoaderPass().apply(_FAKE_ASSEMBLY, cfg)
-        text = result.decode("utf-8")
-        stripped = text.replace("'", "").replace("+", "")
-        assert "amsiInitFailed" in stripped
+        assert "VirtualProtect" not in text
+        assert "amsiInitFailed" not in text.replace("'", "").replace("+", "")
 
     def test_is_opt_in(self) -> None:
         assert Ps1AssemblyLoaderPass.opt_in is True

