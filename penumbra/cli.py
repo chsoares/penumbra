@@ -267,23 +267,21 @@ def main(
         ps1_data = loader_pass.apply(obfuscated_asm, config)
 
         # Stage 3: Run PS1 passes on the generated script.
-        # Skip the amsi pass — it would place the bypass INSIDE the Base64+IEX
-        # block where AMSI scans it before execution. Instead, the encode pass
-        # prepends the bypass OUTSIDE the encoded block.
-        ps1_extra = dict(extra)
-        ps1_extra["amsi_technique"] = amsi_technique or "patch"
+        # Skip the amsi pass — the user must run the AMSI bypass manually
+        # before executing the script (Defender detects any embedded bypass).
         ps1_config = PassConfig(
             pipeline=PipelineType.PS1,
             safe_rename=safe_rename,
             verbose=verbose,
-            extra=ps1_extra,
+            extra=extra,
         )
         resolved_ps1 = [
             p for p in resolve_passes(PipelineType.PS1) if p.name != "amsi"
         ]
         result = run(ps1_data, resolved_ps1, ps1_config, output_path=str(output))
         output.write_bytes(result)
-        write_hint(f"powershell -ep bypass -File {output}")
+        write_hint("run AMSI bypass first, then: powershell -ep bypass -File "
+                    + str(output))
         raise typer.Exit()
 
     if clm_bypass and pipe_type == PipelineType.PS1:
