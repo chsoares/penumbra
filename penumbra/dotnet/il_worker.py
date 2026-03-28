@@ -9,7 +9,7 @@ from pathlib import Path
 
 from penumbra.types import PassConfig
 
-_WORKER_PROJECT = Path(__file__).resolve().parent.parent.parent / "dotnet-worker"
+_WORKER_PROJECT = Path(__file__).resolve().parent / "worker"
 
 
 def _invoke_worker(data: bytes, pass_name: str, config: PassConfig) -> bytes:

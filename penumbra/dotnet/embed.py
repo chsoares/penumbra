@@ -499,7 +499,7 @@ class DotnetEmbedPass:
         amsi_dll = self._build_amsi_bypass_dll()
         amsi_b64 = base64.b64encode(amsi_dll).decode("ascii")
 
-        worker_project = Path(__file__).resolve().parent.parent.parent / "dotnet-worker"
+        worker_project = Path(__file__).resolve().parent / "worker"
 
         tmp_host = tempfile.NamedTemporaryFile(suffix=".exe", delete=False)
         tmp_out = tempfile.NamedTemporaryFile(suffix=".exe", delete=False)

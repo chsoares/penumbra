@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "qF7Ss37ZQLxHnDFfdHN20hIZFSKDeo4V+x2mh0zCaoyhIthjw4rVYL5FAHOhWznhlrolAo1lL29bABnvmKplXQ==",
+  "success": true,
+  "projectFilePath": "/home/chsoares/Repos/penumbra/penumbra/dotnet/worker/dotnet-worker.csproj",
+  "expectedPackageFiles": [
+    "/home/chsoares/.nuget/packages/dnlib/4.4.0/dnlib.4.4.0.nupkg.sha512",
+    "/home/chsoares/.nuget/packages/microsoft.aspnetcore.app.ref/8.0.25/microsoft.aspnetcore.app.ref.8.0.25.nupkg.sha512"
+  ],
+  "logs": []
+}

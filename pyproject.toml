@@ -2,6 +2,11 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["penumbra"]
+artifacts = ["penumbra/dotnet/worker/**"]
+exclude = ["penumbra/dotnet/worker/bin/**", "penumbra/dotnet/worker/obj/**"]
+
 [project]
 name = "penumbra"
 version = "0.1.0"
