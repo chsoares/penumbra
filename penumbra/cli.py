@@ -159,6 +159,13 @@ def main(
             help="Process injection mode for shellcode (default: notepad.exe)",
         ),
     ] = None,
+    source: Annotated[
+        bool,
+        typer.Option(
+            "--source",
+            help="Export C# project source instead of compiling",
+        ),
+    ] = False,
     safe_rename: Annotated[
         bool, typer.Option("--safe-rename", help="Enable safe-rename mode")
     ] = False,
@@ -223,6 +230,8 @@ def main(
         extra["inject_process"] = inject if inject else "notepad.exe"
     if lolbas:
         extra["lolbas_format"] = lolbas
+    if source:
+        extra["source"] = True
 
     config = PassConfig(
         pipeline=pipe_type,
@@ -234,21 +243,38 @@ def main(
     # Determine output path
     if output is None:
         stem = input_file.stem
-        if ps1_loader:
+        if source:
+            # --source outputs a directory
+            output = input_file.parent / f"{stem}.src"
+        elif ps1_loader:
             suffix = ".ps1"
+            output = input_file.parent / f"{stem}.obf{suffix}"
         elif clm_bypass:
             suffix = ".exe"
+            output = input_file.parent / f"{stem}.obf{suffix}"
         elif lolbas:
             suffix = ".dll" if lolbas == "regasm" else ".exe"
+            output = input_file.parent / f"{stem}.obf{suffix}"
         elif pipe_type == PipelineType.SHELLCODE:
             if inject is not None:
                 suffix = ".exe"
             else:
                 sc_fmt = fmt or "exe"
                 suffix = f".{sc_fmt}"
+            output = input_file.parent / f"{stem}.obf{suffix}"
         else:
             suffix = input_file.suffix
-        output = input_file.parent / f"{stem}.obf{suffix}"
+            output = input_file.parent / f"{stem}.obf{suffix}"
+
+    # Set source output directory now that output path is determined
+    if source:
+        extra["source_output"] = str(output)
+        config = PassConfig(
+            pipeline=pipe_type,
+            safe_rename=safe_rename,
+            verbose=verbose,
+            extra=extra,
+        )
 
     # --- Cross-pipeline routing ---
 
@@ -319,7 +345,10 @@ def main(
 
         clm_pass = ClmBypassPass()
         result = run(obfuscated_ps1, [clm_pass], config, output_path=str(output))
-        output.write_bytes(result)
+        if source and result == b"":
+            write_hint(f"compile with: dotnet publish {output} -c Release")
+        else:
+            output.write_bytes(result)
         raise typer.Exit()
 
     # --- Standard single-pipeline flow ---
@@ -348,10 +377,14 @@ def main(
     if inject is not None and not pass_names_list:
         resolved = [p for p in resolved if p.name != "loader"]
     result = run(data, resolved, config, output_path=str(output))
-    output.write_bytes(result)
 
-    # Print execution hints
-    _print_hint(output, embed, ps1_loader, lolbas, uac, clm_bypass, inject)
+    if source and result == b"":
+        # Source was exported to directory by the pass
+        write_hint(f"compile with: dotnet publish {output} -c Release")
+    else:
+        output.write_bytes(result)
+        # Print execution hints
+        _print_hint(output, embed, ps1_loader, lolbas, uac, clm_bypass, inject)
 
 
 def lolbas_pass_name(fmt: str) -> str:

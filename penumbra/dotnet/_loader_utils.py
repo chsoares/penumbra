@@ -297,6 +297,23 @@ def compile_dotnet_project(project_dir: Path, framework: str = "net472") -> byte
     raise RuntimeError(f"Build output not found. Files: {files}")
 
 
+def export_source_project(project_dir: Path, output_dir: Path) -> None:
+    """Copy a generated C# project to a user-specified directory.
+
+    Used with --source to export project files instead of compiling.
+    Copies only source files (.cs, .csproj), not build artifacts.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for item in project_dir.iterdir():
+        if item.is_file() and item.suffix in (".cs", ".csproj"):
+            shutil.copy2(item, output_dir / item.name)
+        elif item.is_dir() and item.name not in ("bin", "obj", "out"):
+            dest = output_dir / item.name
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(item, dest)
+
+
 def write_fragment_files(
     project_dir: Path,
     chunks: list[str],

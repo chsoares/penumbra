@@ -129,9 +129,6 @@ class ClmBypassPass:
         return "clm-bypass"
 
     def apply(self, data: bytes, config: PassConfig) -> bytes:
-        if not shutil.which("dotnet"):
-            raise RuntimeError("dotnet SDK not found. Install .NET 8+ SDK.")
-
         # XOR encrypt the PS1 payload
         key = os.urandom(32)
         encrypted = xor_encrypt(data, key)
@@ -143,6 +140,17 @@ class ClmBypassPass:
 
         try:
             _generate_clm_project(payload_b64, key_b64, tmp_path)
+
+            if config.extra.get("source"):
+                from penumbra.dotnet._loader_utils import export_source_project
+
+                output_dir = Path(str(config.extra.get("source_output", tmp_path)))
+                export_source_project(tmp_path, output_dir)
+                return b""
+
+            if not shutil.which("dotnet"):
+                raise RuntimeError("dotnet SDK not found. Install .NET 8+ SDK.")
             return compile_dotnet_project(tmp_path, "net472")
         finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+            if not config.extra.get("source"):
+                shutil.rmtree(tmp_dir, ignore_errors=True)

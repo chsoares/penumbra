@@ -25,7 +25,7 @@ Every pass implements the `Pass` protocol (`penumbra/types.py`):
 | Package | Type | Status |
 |---------|------|--------|
 | `penumbra/ps/` | PS1 | Ready (amsi, rename, tokenize, encode, uac*, ps1-loader*) |
-| `penumbra/dotnet/` | .NET IL | Ready (dinvoke, rename, encrypt-strings, flow, strip-debug, embed*, lolbas-*, clm-bypass*) |
+| `penumbra/dotnet/` | .NET IL | Ready (dinvoke, rename, encrypt-strings, flow, strip-debug, embed*, lolbas-installutil*, lolbas-regasm*, clm-bypass*) |
 | `penumbra/script/` | Python/Bash | Ready (wrap, encode) |
 | `penumbra/shellcode/` | Raw shellcode | Ready (encrypt, loader, inject*) |
 | `penumbra/vbs/` | VBScript | Ready (encode, wrap) |
