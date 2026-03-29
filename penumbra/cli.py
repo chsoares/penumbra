@@ -138,7 +138,7 @@ def main(
         str | None,
         typer.Option(
             "--lolbas",
-            help="LOLBAS output format: installutil, rundll32, regasm (dotnet-il)",
+            help="LOLBAS output format: installutil, regasm (dotnet-il)",
         ),
     ] = None,
     uac: Annotated[
@@ -239,7 +239,7 @@ def main(
         elif clm_bypass:
             suffix = ".exe"
         elif lolbas:
-            suffix = ".dll" if lolbas in ("regasm", "rundll32") else ".exe"
+            suffix = ".dll" if lolbas == "regasm" else ".exe"
         elif pipe_type == PipelineType.SHELLCODE:
             if inject is not None:
                 suffix = ".exe"
@@ -379,8 +379,6 @@ def _print_hint(
             r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe "
             f"/U {output}"
         )
-    elif lolbas == "rundll32":
-        write_hint(rf"C:\Windows\System32\rundll32.exe {output},DllMain")
     elif uac:
         write_hint(f"powershell -ep bypass -File {output}")
     pass

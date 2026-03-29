@@ -9,10 +9,8 @@ from penumbra.dotnet._loader_utils import encrypt_and_encode
 from penumbra.dotnet.lolbas import (
     InstallUtilPass,
     RegAsmPass,
-    Rundll32Pass,
     _generate_installutil_project,
     _generate_regasm_project,
-    _generate_rundll32_project,
 )
 from penumbra.types import PassConfig, PipelineType
 
@@ -71,30 +69,6 @@ class TestRegAsmProject:
 
     def test_pass_name(self) -> None:
         assert RegAsmPass().name == "lolbas-regasm"
-
-
-class TestRundll32Project:
-    def test_generates_csproj(self) -> None:
-        payload_b64, key_b64 = encrypt_and_encode(_FAKE_ASSEMBLY)
-        with tempfile.TemporaryDirectory() as td:
-            _generate_rundll32_project(payload_b64, key_b64, Path(td))
-            csproj = (Path(td) / "Loader.csproj").read_text()
-            assert "Library" in csproj
-            assert "DllExport" in csproj
-
-    def test_generates_program_cs(self) -> None:
-        payload_b64, key_b64 = encrypt_and_encode(_FAKE_ASSEMBLY)
-        with tempfile.TemporaryDirectory() as td:
-            _generate_rundll32_project(payload_b64, key_b64, Path(td))
-            prog = (Path(td) / "Program.cs").read_text()
-            assert 'DllExport("DllMain"' in prog
-            assert "Assembly.Load" in prog
-
-    def test_pass_is_opt_in(self) -> None:
-        assert Rundll32Pass.opt_in is True
-
-    def test_pass_name(self) -> None:
-        assert Rundll32Pass().name == "lolbas-rundll32"
 
 
 class TestFragmentAndJunkGeneration:
