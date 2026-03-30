@@ -50,6 +50,15 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def _parse_passes(passes: str | None) -> list[str] | None:
+    """Parse --passes value: None = defaults, 'none' = empty, else split by comma."""
+    if passes is None:
+        return None
+    if passes.strip().lower() == "none":
+        return []
+    return [p.strip() for p in passes.split(",")]
+
+
 class PenumbraApp(typer.Typer):
     """Typer subclass that prints the banner before any output."""
 
@@ -107,7 +116,7 @@ def main(
     ] = None,
     passes: Annotated[
         str | None,
-        typer.Option("--passes", help="Comma-separated pass names"),
+        typer.Option("--passes", help="Comma-separated pass names (use 'none' to skip all)"),
     ] = None,
     embed: Annotated[
         bool, typer.Option("--embed", help="Wrap output in an in-memory loader (dotnet-il)")
@@ -280,9 +289,7 @@ def main(
 
     if ps1_loader and pipe_type == PipelineType.DOTNET_IL:
         # Stage 1: Run dotnet-il default passes on the assembly
-        pass_names_list = (
-            [p.strip() for p in passes.split(",")] if passes else None
-        )
+        pass_names_list = _parse_passes(passes)
         resolved_il = resolve_passes(PipelineType.DOTNET_IL, pass_names_list)
         obfuscated_asm = run(data, resolved_il, config, silent=True)
 
@@ -334,9 +341,7 @@ def main(
 
     if clm_bypass and pipe_type == PipelineType.PS1:
         # Stage 1: Run PS1 passes on the script
-        pass_names_list = (
-            [p.strip() for p in passes.split(",")] if passes else None
-        )
+        pass_names_list = _parse_passes(passes)
         resolved_ps1 = resolve_passes(PipelineType.PS1, pass_names_list)
         obfuscated_ps1 = run(data, resolved_ps1, config, silent=True)
 
@@ -354,7 +359,7 @@ def main(
     # --- Standard single-pipeline flow ---
 
     # Resolve passes
-    pass_names_list = [p.strip() for p in passes.split(",")] if passes else None
+    pass_names_list = _parse_passes(passes)
     if embed and pass_names_list and "embed" not in pass_names_list:
         pass_names_list.append("embed")
 

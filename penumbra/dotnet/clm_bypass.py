@@ -50,6 +50,12 @@ def _generate_clm_project(
     idx_var = plausible_field()
 
     # .csproj — net472 Exe referencing System.Management.Automation from GAC
+    sma_hint = (
+        r"C:\Windows\Microsoft.NET\assembly\GAC_MSIL"
+        r"\System.Management.Automation"
+        r"\v4.0_3.0.0.0__31bf3856ad364e35"
+        r"\System.Management.Automation.dll"
+    )
     (project_dir / "Loader.csproj").write_text(
         '<Project Sdk="Microsoft.NET.Sdk">\n'
         "  <PropertyGroup>\n"
@@ -58,7 +64,9 @@ def _generate_clm_project(
         "    <LangVersion>10</LangVersion>\n"
         "  </PropertyGroup>\n"
         "  <ItemGroup>\n"
-        '    <Reference Include="System.Management.Automation" />\n'
+        '    <Reference Include="System.Management.Automation">\n'
+        f"      <HintPath>{sma_hint}</HintPath>\n"
+        "    </Reference>\n"
         "  </ItemGroup>\n"
         "</Project>\n"
     )
