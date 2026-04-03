@@ -92,6 +92,9 @@ internal static partial class Program
                 case "strip-debug":
                     ApplyStripDebug(module);
                     break;
+                case "scrub-guid":
+                    ApplyScrubGuid(module);
+                    break;
                 case "dinvoke":
                     ApplyDInvoke(module);
                     break;

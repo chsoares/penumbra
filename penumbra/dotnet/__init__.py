@@ -7,6 +7,7 @@ from penumbra.dotnet.il_worker import (
     DotnetEncryptStringsPass,
     DotnetFlowPass,
     DotnetRenamePass,
+    DotnetScrubGuidPass,
     DotnetStripDebugPass,
 )
 from penumbra.dotnet.lolbas import InstallUtilPass, RegAsmPass
@@ -19,6 +20,7 @@ register_pipeline(PipelineType.DOTNET_IL, [
     DotnetEncryptStringsPass(),
     DotnetFlowPass(),
     DotnetStripDebugPass(),
+    DotnetScrubGuidPass(),
     DotnetEmbedPass(),
     InstallUtilPass(),
     RegAsmPass(),

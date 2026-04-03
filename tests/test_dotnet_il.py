@@ -14,6 +14,7 @@ from penumbra.dotnet.il_worker import (
     DotnetEncryptStringsPass,
     DotnetFlowPass,
     DotnetRenamePass,
+    DotnetScrubGuidPass,
     DotnetStripDebugPass,
 )
 from penumbra.types import Pass, PassConfig, PipelineType
@@ -39,12 +40,17 @@ def test_dotnet_strip_debug_pass_name() -> None:
     assert DotnetStripDebugPass().name == "strip-debug"
 
 
+def test_dotnet_scrub_guid_pass_name() -> None:
+    assert DotnetScrubGuidPass().name == "scrub-guid"
+
+
 def test_all_passes_satisfy_protocol() -> None:
     passes = [
         DotnetRenamePass(),
         DotnetEncryptStringsPass(),
         DotnetFlowPass(),
         DotnetStripDebugPass(),
+        DotnetScrubGuidPass(),
     ]
     for p in passes:
         assert isinstance(p, Pass), f"{p.name} does not satisfy Pass protocol"

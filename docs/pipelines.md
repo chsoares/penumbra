@@ -22,7 +22,7 @@ Every pass implements the `Pass` protocol: `apply(data: bytes, config: PassConfi
 
 **Auto-detection**: MZ header + CLR data directory
 
-**Default passes**: `dinvoke` → `rename` → `encrypt-strings` → `flow` → `strip-debug`
+**Default passes**: `dinvoke` → `rename` → `encrypt-strings` → `flow` → `strip-debug` → `scrub-guid`
 
 **Opt-in passes**:
 - `embed` — in-memory loader (`--embed`)

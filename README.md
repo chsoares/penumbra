@@ -11,7 +11,7 @@ Modular obfuscation toolkit with composable pass architecture. Auto-detects file
 | Pipeline | Input | Passes | Status |
 |----------|-------|--------|--------|
 | **PS1** | `.ps1` scripts | `amsi` `rename` `tokenize` `encode` + opt-in: `uac` `ps1-loader` | Ready |
-| **DOTNET-IL** | `.exe` / `.dll` (.NET assemblies) | `dinvoke` `rename` `encrypt-strings` `flow` `strip-debug` + opt-in: `embed` `lolbas-*` `clm-bypass` | Ready |
+| **DOTNET-IL** | `.exe` / `.dll` (.NET assemblies) | `dinvoke` `rename` `encrypt-strings` `flow` `strip-debug` `scrub-guid` + opt-in: `embed` `lolbas-*` `clm-bypass` | Ready |
 | **Script** | `.py` / `.sh` | `wrap` `encode` | Ready |
 | **Shellcode** | `.bin` / `.raw` | `encrypt` `loader` + opt-in: `inject` | Ready |
 | **VBS** | `.vbs` / `.vbe` | `encode` `wrap` | Ready |
@@ -32,9 +32,10 @@ Powered by [dnlib](https://github.com/0xd4d/dnlib) via a C# subprocess worker:
 
 - **dinvoke** — convert static `[DllImport]` PInvoke calls to runtime DInvoke resolution
 - **rename** — randomize type, method, field, and property names. Use `--safe-rename` for reflection-heavy tools
-- **encrypt-strings** — XOR-encrypt string literals with a runtime decryptor method
+- **encrypt-strings** — XOR-encrypt string literals (16-byte keys) with a runtime decryptor method
 - **flow** — insert NOP padding to shift instruction offsets
-- **strip-debug** — remove `DebuggableAttribute`, PDB info, compiler attributes
+- **strip-debug** — remove debug attributes and scrub identifying assembly metadata (`AssemblyCompany`, `AssemblyProduct`, `AssemblyTitle`, etc.)
+- **scrub-guid** — regenerate assembly GUID and MVID to break signature-based fingerprinting
 - **embed** *(opt-in)* — in-memory loader with encrypted payload (`--embed`). With `--host`, trojanizes an existing binary
 - **lolbas-installutil** *(opt-in)* — InstallUtil.exe loader format (`--lolbas installutil`)
 - **lolbas-regasm** *(opt-in)* — RegAsm.exe loader format (`--lolbas regasm`)

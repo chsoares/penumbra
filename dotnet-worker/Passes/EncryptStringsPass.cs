@@ -168,7 +168,7 @@ internal static partial class Program
 
                     // XOR encrypt the string
                     var plainBytes = Encoding.UTF8.GetBytes(s);
-                    var key = new byte[4];
+                    var key = new byte[16];
                     RandomNumberGenerator.Fill(key);
                     var encrypted = new byte[plainBytes.Length];
                     for (int j = 0; j < plainBytes.Length; j++)

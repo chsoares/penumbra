@@ -94,7 +94,7 @@ class DotnetDInvokePass:
 
 
 class DotnetStripDebugPass:
-    """Remove debug attributes and PDB state from the assembly."""
+    """Remove debug attributes, PDB state, and identifying metadata from the assembly."""
 
     @property
     def name(self) -> str:
@@ -102,3 +102,14 @@ class DotnetStripDebugPass:
 
     def apply(self, data: bytes, config: PassConfig) -> bytes:
         return _invoke_worker(data, "strip-debug", config)
+
+
+class DotnetScrubGuidPass:
+    """Regenerate assembly GUID and MVID to break signature-based fingerprinting."""
+
+    @property
+    def name(self) -> str:
+        return "scrub-guid"
+
+    def apply(self, data: bytes, config: PassConfig) -> bytes:
+        return _invoke_worker(data, "scrub-guid", config)

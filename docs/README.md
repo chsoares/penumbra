@@ -14,7 +14,7 @@ penumbra payload.exe
 | Pipeline | Extensions | Default Passes |
 |----------|-----------|----------------|
 | PS1 | `.ps1`, `.psm1`, `.psd1` | amsi, rename, tokenize, encode |
-| .NET IL | `.exe`/`.dll` (MZ+CLR) | dinvoke, rename, encrypt-strings, flow, strip-debug |
+| .NET IL | `.exe`/`.dll` (MZ+CLR) | dinvoke, rename, encrypt-strings, flow, strip-debug, scrub-guid |
 | Script | `.py`, `.sh`, `.bash` | wrap, encode |
 | Shellcode | `.bin`, `.raw`, `.shellcode` | encrypt, loader |
 | VBS | `.vbs`, `.vbe` | encode, wrap |
